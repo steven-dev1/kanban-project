@@ -51,6 +51,8 @@ interface BoardContextValue {
   moveList: (id: string, beforePos: number | null, afterPos: number | null) => Promise<void>;
   addCard: (listId: string, title: string, description?: string) => Promise<Card | null>;
   updateCard: (id: string, patch: Partial<Card>) => Promise<void>;
+  toggleCardComplete: (cardId: string, completed: boolean) => Promise<void>;
+  duplicateCard: (cardId: string) => Promise<string | null>;
   archiveCard: (id: string, archived: boolean) => Promise<void>;
   deleteCard: (id: string) => Promise<void>;
   moveCard: (
@@ -335,6 +337,92 @@ export function BoardProvider({
     [supabase],
   );
 
+  const toggleCardComplete = useCallback(
+    async (cardId: string, completed: boolean) => {
+      const patch = {
+        is_completed: completed,
+        completed_at: completed ? new Date().toISOString() : null,
+      };
+      setLists((prev) =>
+        prev.map((l) => ({
+          ...l,
+          cards: l.cards.map((c) => (c.id === cardId ? { ...c, ...patch } : c)),
+        })),
+      );
+      await supabase.from("cards").update(patch).eq("id", cardId);
+    },
+    [supabase],
+  );
+
+  const duplicateCard = useCallback(
+    async (cardId: string) => {
+      const source = lists.flatMap((l) => l.cards).find((c) => c.id === cardId);
+      if (!source) return null;
+      const list = lists.find((l) => l.id === source.list_id);
+      const siblings = [...(list?.cards ?? [])].sort(byPosition);
+      const index = siblings.findIndex((c) => c.id === cardId);
+      const next = siblings[index + 1];
+      const position = positionBetween(source.position, next ? next.position : null);
+
+      const { data, error } = await supabase
+        .from("cards")
+        .insert({
+          board_id: boardId,
+          list_id: source.list_id,
+          title: `${source.title} (copia)`,
+          description: source.description,
+          position,
+          due_date: source.due_date,
+          created_by: user?.id ?? null,
+        })
+        .select("id")
+        .single();
+
+      if (error || !data) {
+        throw new Error(error?.message ?? "No se pudo duplicar la card");
+      }
+
+      const newId = data.id as string;
+
+      if (source.card_labels?.length) {
+        await supabase
+          .from("card_labels")
+          .insert(source.card_labels.map((cl) => ({ card_id: newId, label_id: cl.label_id })));
+      }
+
+      if (source.card_assignees?.length) {
+        await supabase
+          .from("card_assignees")
+          .insert(source.card_assignees.map((a) => ({ card_id: newId, user_id: a.user_id })));
+      }
+
+      if (source.attachments?.length) {
+        for (const att of source.attachments) {
+          const safeName = att.name.replace(/[^\w.\-]+/g, "_");
+          const newPath = `${boardId}/${newId}/${crypto.randomUUID()}-${safeName}`;
+          const { error: copyError } = await supabase.storage
+            .from("attachments")
+            .copy(att.path, newPath);
+          if (!copyError) {
+            await supabase.from("attachments").insert({
+              card_id: newId,
+              board_id: boardId,
+              name: att.name,
+              path: newPath,
+              size: att.size,
+              mime_type: att.mime_type,
+              uploaded_by: user?.id ?? null,
+            });
+          }
+        }
+      }
+
+      await refetch();
+      return newId;
+    },
+    [supabase, lists, boardId, user, refetch],
+  );
+
   const archiveCard = useCallback(
     async (id: string, archived: boolean) => {
       await supabase
@@ -580,6 +668,8 @@ export function BoardProvider({
       moveList,
       addCard,
       updateCard,
+      toggleCardComplete,
+      duplicateCard,
       archiveCard,
       deleteCard,
       moveCard,
@@ -620,6 +710,8 @@ export function BoardProvider({
       moveList,
       addCard,
       updateCard,
+      toggleCardComplete,
+      duplicateCard,
       archiveCard,
       deleteCard,
       moveCard,

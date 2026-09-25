@@ -68,12 +68,18 @@ create table if not exists public.cards (
   description text,
   position double precision not null default 1000,
   due_date timestamptz,
+  is_completed boolean not null default false,
+  completed_at timestamptz,
   is_archived boolean not null default false,
   archived_at timestamptz,
   created_by uuid references public.profiles(id) on delete set null,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
+-- Columns added after the initial release (safe to re-run on existing DBs)
+alter table public.cards add column if not exists is_completed boolean not null default false;
+alter table public.cards add column if not exists completed_at timestamptz;
 
 create table if not exists public.labels (
   id uuid primary key default gen_random_uuid(),

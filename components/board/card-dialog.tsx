@@ -2,19 +2,24 @@
 
 import { RichTextEditor } from "@/components/board/rich-text-editor";
 import { Button } from "@/components/ui/button";
+import { DatePicker } from "@/components/ui/date-picker";
 import { Avatar } from "@/components/ui/dropdown";
-import { Input, Select } from "@/components/ui/input";
+import { Input } from "@/components/ui/input";
 import { Modal } from "@/components/ui/modal";
+import { Select } from "@/components/ui/select";
 import type { CardAssignee } from "@/lib/types";
-import { LABEL_COLORS, cn, formatDate } from "@/lib/utils";
+import { LABEL_COLORS, cn } from "@/lib/utils";
 import { useBoard } from "@/providers/board-provider";
 import {
   Archive,
   Calendar,
+  CheckCircle2,
+  Copy,
   Download,
   Loader2,
   Paperclip,
   Plus,
+  RotateCcw,
   Tag,
   Trash2,
   Upload,
@@ -44,6 +49,8 @@ export function CardDialog({
     ownerProfile,
     canEdit,
     updateCard,
+    toggleCardComplete,
+    duplicateCard,
     archiveCard,
     deleteCard,
     toggleCardLabel,
@@ -70,6 +77,7 @@ export function CardDialog({
   const [newLabelColor, setNewLabelColor] = useState(LABEL_COLORS[0]);
   const [uploading, setUploading] = useState(false);
   const [attachmentError, setAttachmentError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const initialised = useRef<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -123,7 +131,6 @@ export function CardDialog({
   if (!card) return null;
 
   const assigned = new Set(card.card_labels?.map((cl) => cl.label_id));
-  const dueValue = card.due_date ? card.due_date.slice(0, 10) : "";
 
   function handleDescription(html: string) {
     setDescription(html);
@@ -244,21 +251,11 @@ export function CardDialog({
               <label className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
                 <Calendar className="h-3.5 w-3.5" /> Fecha límite
               </label>
-              <Input
-                type="date"
+              <DatePicker
+                value={card.due_date}
                 disabled={!canEdit}
-                value={dueValue}
-                onChange={(e) =>
-                  updateCard(card.id, {
-                    due_date: e.target.value
-                      ? new Date(`${e.target.value}T12:00:00`).toISOString()
-                      : null,
-                  })
-                }
+                onChange={(iso) => updateCard(card.id, { due_date: iso })}
               />
-              {card.due_date && (
-                <p className="text-xs text-muted-foreground">{formatDate(card.due_date)}</p>
-              )}
             </div>
 
             <div className="flex flex-col gap-1.5">
@@ -266,14 +263,13 @@ export function CardDialog({
               <Select
                 disabled={!canEdit}
                 value={card.list_id}
-                onChange={(e) => updateCard(card.id, { list_id: e.target.value })}
-              >
-                {lists.map((l) => (
-                  <option key={l.id} value={l.id}>
-                    {l.title}
-                  </option>
-                ))}
-              </Select>
+                onChange={(v) => updateCard(card.id, { list_id: v })}
+                options={lists.map((l) => ({
+                  value: l.id,
+                  label: l.title,
+                  color: l.color ?? undefined,
+                }))}
+              />
             </div>
           </div>
         </div>
@@ -379,12 +375,52 @@ export function CardDialog({
           </div>
         </div>
 
-        <div className="flex items-center justify-between border-t border-border pt-4">
+        <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border pt-4">
+          {actionError && (
+            <p className="w-full rounded-md bg-danger/10 px-2 py-1 text-xs text-danger">
+              {actionError}
+            </p>
+          )}
           <p className="text-xs text-muted-foreground">
+            {card.is_completed && card.completed_at
+              ? `Completada el ${new Date(card.completed_at).toLocaleDateString()} · `
+              : ""}
             Creada el {new Date(card.created_at).toLocaleDateString()}
           </p>
           {canEdit && (
             <div className="flex gap-2">
+              <Button
+                variant={card.is_completed ? "outline" : "primary"}
+                size="sm"
+                onClick={() => toggleCardComplete(card.id, !card.is_completed)}
+              >
+                {card.is_completed ? (
+                  <>
+                    <RotateCcw className="h-4 w-4" /> Reabrir
+                  </>
+                ) : (
+                  <>
+                    <CheckCircle2 className="h-4 w-4" /> Completar
+                  </>
+                )}
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={async () => {
+                  try {
+                    setActionError(null);
+                    await duplicateCard(card.id);
+                    onClose();
+                  } catch (err) {
+                    setActionError(
+                      err instanceof Error ? err.message : "No se pudo duplicar la card",
+                    );
+                  }
+                }}
+              >
+                <Copy className="h-4 w-4" /> Duplicar
+              </Button>
               <Button
                 variant="outline"
                 size="sm"

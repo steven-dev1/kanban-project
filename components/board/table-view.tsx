@@ -2,9 +2,11 @@
 
 import { Avatar } from "@/components/ui/dropdown";
 import { Input } from "@/components/ui/input";
+import { Select } from "@/components/ui/select";
 import type { CardWithLabels } from "@/lib/types";
-import { cn, formatDate, isOverdue } from "@/lib/utils";
+import { cn, dueState, formatDate } from "@/lib/utils";
 import { useBoard } from "@/providers/board-provider";
+import { CheckCircle2 } from "lucide-react";
 import { useMemo, useState } from "react";
 
 export function TableView({
@@ -42,30 +44,28 @@ export function TableView({
           onChange={(e) => setQuery(e.target.value)}
           className="max-w-xs"
         />
-        <select
+        <Select
           value={listFilter}
-          onChange={(e) => setListFilter(e.target.value)}
-          className="h-9 rounded-lg border border-input bg-card px-3 text-sm"
-        >
-          <option value="all">Todas las listas</option>
-          {lists.map((l) => (
-            <option key={l.id} value={l.id}>
-              {l.title}
-            </option>
-          ))}
-        </select>
-        <select
+          onChange={setListFilter}
+          className="w-44"
+          options={[
+            { value: "all", label: "Todas las listas" },
+            ...lists.map((l) => ({
+              value: l.id,
+              label: l.title,
+              color: l.color ?? undefined,
+            })),
+          ]}
+        />
+        <Select
           value={labelFilter}
-          onChange={(e) => setLabelFilter(e.target.value)}
-          className="h-9 rounded-lg border border-input bg-card px-3 text-sm"
-        >
-          <option value="all">Todas las etiquetas</option>
-          {labels.map((l) => (
-            <option key={l.id} value={l.id}>
-              {l.name}
-            </option>
-          ))}
-        </select>
+          onChange={setLabelFilter}
+          className="w-44"
+          options={[
+            { value: "all", label: "Todas las etiquetas" },
+            ...labels.map((l) => ({ value: l.id, label: l.name, color: l.color })),
+          ]}
+        />
       </div>
 
       <div className="min-h-0 flex-1 overflow-auto rounded-xl border border-border bg-card">
@@ -76,24 +76,34 @@ export function TableView({
               <th className="px-4 py-3 font-medium">Lista</th>
               <th className="px-4 py-3 font-medium">Responsables</th>
               <th className="px-4 py-3 font-medium">Etiquetas</th>
+              <th className="px-4 py-3 font-medium">Estado</th>
               <th className="px-4 py-3 font-medium">Fecha límite</th>
             </tr>
           </thead>
           <tbody>
             {rows.length === 0 && (
               <tr>
-                <td colSpan={5} className="px-4 py-10 text-center text-muted-foreground">
+                <td colSpan={6} className="px-4 py-10 text-center text-muted-foreground">
                   Sin resultados
                 </td>
               </tr>
             )}
-            {rows.map(({ card, listTitle, listColor }) => (
-              <tr
-                key={card.id}
-                onClick={() => onCardClick(card)}
-                className="cursor-pointer border-t border-border transition-colors hover:bg-muted/50"
-              >
-                <td className="px-4 py-3 font-medium">{card.title}</td>
+            {rows.map(({ card, listTitle, listColor }) => {
+              const st = dueState(card.due_date, card.is_completed);
+              return (
+                <tr
+                  key={card.id}
+                  onClick={() => onCardClick(card)}
+                  className="cursor-pointer border-t border-border transition-colors hover:bg-muted/50"
+                >
+                <td
+                  className={cn(
+                    "px-4 py-3 font-medium",
+                    card.is_completed && "text-muted-foreground line-through",
+                  )}
+                >
+                  {card.title}
+                </td>
                 <td className="px-4 py-3">
                   <span className="inline-flex items-center gap-1.5">
                     <span
@@ -129,16 +139,37 @@ export function TableView({
                     ))}
                   </div>
                 </td>
+                <td className="px-4 py-3">
+                  {st === "completed" && (
+                    <span className="inline-flex items-center gap-1 rounded-full bg-green-500/15 px-2 py-0.5 text-[11px] font-medium text-green-600 dark:text-green-400">
+                      <CheckCircle2 className="h-3 w-3" /> Completada
+                    </span>
+                  )}
+                  {st === "overdue" && (
+                    <span className="inline-flex items-center rounded-full bg-red-500/15 px-2 py-0.5 text-[11px] font-medium text-red-600 dark:text-red-400">
+                      Vencida
+                    </span>
+                  )}
+                  {st === "soon" && (
+                    <span className="inline-flex items-center rounded-full bg-amber-500/15 px-2 py-0.5 text-[11px] font-medium text-amber-600 dark:text-amber-400">
+                      Por vencer
+                    </span>
+                  )}
+                  {st === "normal" && <span className="text-muted-foreground">—</span>}
+                </td>
                 <td
                   className={cn(
                     "px-4 py-3 text-muted-foreground",
-                    isOverdue(card.due_date) && "font-medium text-danger",
+                    st === "overdue" && "font-medium text-danger",
+                    st === "soon" && "font-medium text-amber-600 dark:text-amber-400",
+                    st === "completed" && "text-green-600 dark:text-green-400",
                   )}
                 >
                   {formatDate(card.due_date) ?? "—"}
                 </td>
               </tr>
-            ))}
+              );
+            })}
           </tbody>
         </table>
       </div>

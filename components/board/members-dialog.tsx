@@ -2,8 +2,9 @@
 
 import { Button } from "@/components/ui/button";
 import { Avatar } from "@/components/ui/dropdown";
-import { Input, Select } from "@/components/ui/input";
+import { Input } from "@/components/ui/input";
 import { Modal } from "@/components/ui/modal";
+import { Select } from "@/components/ui/select";
 import type { Role } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/providers/auth-provider";
@@ -79,12 +80,13 @@ export function MembersDialog({
               />
               <Select
                 value={role}
-                onChange={(e) => setRole(e.target.value as Role)}
+                onChange={(v) => setRole(v as Role)}
                 className="sm:w-32"
-              >
-                <option value="member">Miembro</option>
-                <option value="admin">Admin</option>
-              </Select>
+                options={[
+                  { value: "member", label: "Miembro" },
+                  { value: "admin", label: "Admin" },
+                ]}
+              />
               <Button type="submit" disabled={loading}>
                 Invitar
               </Button>
@@ -137,12 +139,13 @@ export function MembersDialog({
                   <>
                     <Select
                       value={m.role}
-                      onChange={(e) => updateMemberRole(m.id, e.target.value as Role)}
-                      className="h-8 w-28 text-xs"
-                    >
-                      <option value="member">Miembro</option>
-                      <option value="admin">Admin</option>
-                    </Select>
+                      onChange={(v) => updateMemberRole(m.id, v as Role)}
+                      className="w-28"
+                      options={[
+                        { value: "member", label: "Miembro" },
+                        { value: "admin", label: "Admin" },
+                      ]}
+                    />
                     <button
                       onClick={() => removeMember(m.id)}
                       className="rounded-md p-1.5 text-muted-foreground hover:bg-danger/10 hover:text-danger"

@@ -31,6 +31,28 @@ export function isOverdue(value?: string | null, done = false) {
   return due.getTime() < Date.now();
 }
 
+export type DueState = "completed" | "overdue" | "soon" | "normal";
+
+const SOON_DAYS = 3;
+
+export function dueState(value?: string | null, completed = false): DueState {
+  if (completed) return "completed";
+  if (!value) return "normal";
+  const due = new Date(value);
+  due.setHours(23, 59, 59, 999);
+  const now = Date.now();
+  if (due.getTime() < now) return "overdue";
+  if (due.getTime() <= now + SOON_DAYS * 24 * 60 * 60 * 1000) return "soon";
+  return "normal";
+}
+
+export const DUE_STATE_COLORS: Record<DueState, string> = {
+  completed: "#22c55e",
+  overdue: "#ef4444",
+  soon: "#f59e0b",
+  normal: "transparent",
+};
+
 export interface AuthResult<
   U = { id: string; email?: string | null },
   S = { access_token: string } | null,
@@ -60,6 +82,45 @@ export async function withTimeout<T>(
   } finally {
     clearTimeout(timer!);
   }
+}
+
+export interface DateParts {
+  y: number;
+  m: number;
+  d: number;
+}
+
+export function parseDateParts(value?: string | null): DateParts | null {
+  if (!value) return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  return { y: date.getFullYear(), m: date.getMonth(), d: date.getDate() };
+}
+
+export function todayParts(): DateParts {
+  const now = new Date();
+  return { y: now.getFullYear(), m: now.getMonth(), d: now.getDate() };
+}
+
+export function monthLabel(y: number, m: number) {
+  const label = new Date(y, m, 1).toLocaleDateString(undefined, {
+    month: "long",
+    year: "numeric",
+  });
+  return label.charAt(0).toUpperCase() + label.slice(1);
+}
+
+export function monthGrid(y: number, m: number): (number | null)[] {
+  const startWeekday = (new Date(y, m, 1).getDay() + 6) % 7;
+  const days = new Date(y, m + 1, 0).getDate();
+  const cells: (number | null)[] = [];
+  for (let i = 0; i < startWeekday; i++) cells.push(null);
+  for (let d = 1; d <= days; d++) cells.push(d);
+  return cells;
+}
+
+export function isoAtNoon({ y, m, d }: DateParts) {
+  return new Date(y, m, d, 12, 0, 0).toISOString();
 }
 
 export const LIST_COLORS = [

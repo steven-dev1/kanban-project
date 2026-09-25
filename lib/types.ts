@@ -57,6 +57,8 @@ export interface Card {
   description: string | null;
   position: number;
   due_date: string | null;
+  is_completed: boolean;
+  completed_at: string | null;
   is_archived: boolean;
   archived_at: string | null;
   created_by: string | null;
