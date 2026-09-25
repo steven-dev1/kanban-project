@@ -5,6 +5,7 @@ import { Avatar } from "@/components/ui/dropdown";
 import { Input } from "@/components/ui/input";
 import { Modal } from "@/components/ui/modal";
 import { Select } from "@/components/ui/select";
+import { useToast } from "@/components/ui/toast";
 import type { Role } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/providers/auth-provider";
@@ -31,6 +32,7 @@ export function MembersDialog({
     cancelInvitation,
   } = useBoard();
   const { user } = useAuth();
+  const { toast } = useToast();
   const [email, setEmail] = useState("");
   const [role, setRole] = useState<Role>("member");
   const [loading, setLoading] = useState(false);
@@ -59,6 +61,12 @@ export function MembersDialog({
         result.warning ??
         "Invitación enviada. El usuario recibirá un correo y una notificación.",
     });
+    toast(
+      result.warning
+        ? "Invitación creada, pero no se pudo enviar el correo."
+        : "Invitación enviada por correo.",
+      result.warning ? "info" : "success",
+    );
   }
 
   return (

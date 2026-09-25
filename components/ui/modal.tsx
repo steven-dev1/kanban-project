@@ -36,13 +36,13 @@ export function Modal({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/50 p-4 backdrop-blur-sm sm:p-8">
+    <div className="animate-overlay fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/50 p-4 backdrop-blur-sm sm:p-8">
       <div className="fixed inset-0" onClick={onClose} aria-hidden />
       <div
         role="dialog"
         aria-modal="true"
         className={cn(
-          "relative z-10 my-4 w-full rounded-2xl border border-border bg-card text-card-foreground shadow-xl",
+          "animate-pop relative z-10 my-4 w-full rounded-2xl border border-border bg-card text-card-foreground shadow-2xl ring-1 ring-black/5 dark:ring-white/5",
           sizes[size],
           className,
         )}

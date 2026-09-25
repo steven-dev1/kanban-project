@@ -69,7 +69,7 @@ export function CardItem({
       onClick={handleClick}
       title={stateLabel || undefined}
       className={cn(
-        "group/card relative rounded-xl border border-border bg-card p-3 shadow-sm transition-shadow hover:shadow-md",
+        "group/card relative rounded-xl border border-border bg-card p-3 shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md",
         state !== "normal" && "border-l-4",
         state === "completed" && "bg-green-500/5",
         state === "overdue" && "bg-red-500/5",

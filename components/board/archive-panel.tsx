@@ -1,7 +1,9 @@
 "use client";
 
 import { Button } from "@/components/ui/button";
+import { useConfirm } from "@/components/ui/confirm";
 import { Modal } from "@/components/ui/modal";
+import { useToast } from "@/components/ui/toast";
 import { useBoard } from "@/providers/board-provider";
 import { Archive, ArchiveRestore, ListTree, Trash2 } from "lucide-react";
 
@@ -20,6 +22,42 @@ export function ArchivePanel({
     deleteList,
     deleteCard,
   } = useBoard();
+  const confirm = useConfirm();
+  const { toast } = useToast();
+
+  async function restoreList(id: string) {
+    await archiveList(id, false);
+    toast("Lista restaurada");
+  }
+
+  async function removeList(id: string, title: string) {
+    const ok = await confirm({
+      title: "Eliminar lista",
+      message: `¿Eliminar permanentemente "${title}"?`,
+      confirmLabel: "Eliminar",
+      danger: true,
+    });
+    if (!ok) return;
+    await deleteList(id);
+    toast("Lista eliminada");
+  }
+
+  async function restoreCard(id: string) {
+    await archiveCard(id, false);
+    toast("Card restaurada");
+  }
+
+  async function removeCard(id: string) {
+    const ok = await confirm({
+      title: "Eliminar card",
+      message: "¿Eliminar permanentemente esta card?",
+      confirmLabel: "Eliminar",
+      danger: true,
+    });
+    if (!ok) return;
+    await deleteCard(id);
+    toast("Card eliminada");
+  }
 
   return (
     <Modal open={open} onClose={onClose} title="Archivados" size="lg">
@@ -47,17 +85,14 @@ export function ArchivePanel({
                   <Button
                     size="sm"
                     variant="outline"
-                    onClick={() => archiveList(list.id, false)}
+                    onClick={() => restoreList(list.id)}
                   >
                     <ArchiveRestore className="h-3.5 w-3.5" /> Restaurar
                   </Button>
                   <Button
                     size="sm"
                     variant="ghost"
-                    onClick={() => {
-                      if (confirm(`¿Eliminar permanentemente "${list.title}"?`))
-                        deleteList(list.id);
-                    }}
+                    onClick={() => removeList(list.id, list.title)}
                   >
                     <Trash2 className="h-3.5 w-3.5 text-danger" />
                   </Button>
@@ -86,17 +121,14 @@ export function ArchivePanel({
                   <Button
                     size="sm"
                     variant="outline"
-                    onClick={() => archiveCard(card.id, false)}
+                    onClick={() => restoreCard(card.id)}
                   >
                     <ArchiveRestore className="h-3.5 w-3.5" /> Restaurar
                   </Button>
                   <Button
                     size="sm"
                     variant="ghost"
-                    onClick={() => {
-                      if (confirm("¿Eliminar permanentemente esta card?"))
-                        deleteCard(card.id);
-                    }}
+                    onClick={() => removeCard(card.id)}
                   >
                     <Trash2 className="h-3.5 w-3.5 text-danger" />
                   </Button>

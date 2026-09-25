@@ -7,6 +7,7 @@ import { KanbanView } from "@/components/board/kanban-view";
 import { MembersDialog } from "@/components/board/members-dialog";
 import { TableView } from "@/components/board/table-view";
 import { Button } from "@/components/ui/button";
+import { useToast } from "@/components/ui/toast";
 import { cn } from "@/lib/utils";
 import { useBoard } from "@/providers/board-provider";
 import {
@@ -28,6 +29,7 @@ type View = "kanban" | "table" | "charts";
 export function BoardWorkspace() {
   const { board, loading, loadError, isAdmin, togglePause, archivedCards, archivedLists } =
     useBoard();
+  const { toast } = useToast();
   const [view, setView] = useState<View>("kanban");
   const [cardId, setCardId] = useState<string | null>(null);
   const [membersOpen, setMembersOpen] = useState(false);
@@ -35,8 +37,23 @@ export function BoardWorkspace() {
 
   if (loading) {
     return (
-      <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
-        Cargando tablero...
+      <div className="flex h-full flex-col">
+        <div className="flex items-center justify-between gap-3 border-b border-border bg-card px-4 py-3">
+          <div className="h-5 w-40 animate-pulse rounded bg-muted" />
+          <div className="h-8 w-64 animate-pulse rounded-lg bg-muted" />
+        </div>
+        <div className="flex flex-1 gap-3 overflow-hidden p-4">
+          {[1, 2, 3].map((i) => (
+            <div
+              key={i}
+              className="w-72 shrink-0 space-y-2 rounded-2xl border border-border bg-muted/40 p-3"
+            >
+              <div className="h-4 w-24 animate-pulse rounded bg-muted" />
+              <div className="h-16 animate-pulse rounded-xl bg-card" />
+              <div className="h-16 animate-pulse rounded-xl bg-card" />
+            </div>
+          ))}
+        </div>
       </div>
     );
   }
@@ -115,7 +132,10 @@ export function BoardWorkspace() {
             <Button
               variant={board.is_paused ? "primary" : "outline"}
               size="sm"
-              onClick={togglePause}
+              onClick={() => {
+                togglePause();
+                toast(board.is_paused ? "Tablero reanudado" : "Tablero pausado");
+              }}
             >
               {board.is_paused ? (
                 <>

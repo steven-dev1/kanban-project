@@ -39,7 +39,7 @@ export function Dropdown({
       {open && (
         <div
           className={cn(
-            "absolute z-40 mt-2 min-w-[200px] rounded-xl border border-border bg-card p-1.5 shadow-xl",
+            "animate-menu absolute z-40 mt-2 min-w-[200px] rounded-xl border border-border bg-card p-1.5 shadow-xl",
             align === "end" ? "right-0" : "left-0",
             panelClassName,
           )}

@@ -2,11 +2,13 @@
 
 import { RichTextEditor } from "@/components/board/rich-text-editor";
 import { Button } from "@/components/ui/button";
+import { useConfirm } from "@/components/ui/confirm";
 import { DatePicker } from "@/components/ui/date-picker";
 import { Avatar } from "@/components/ui/dropdown";
 import { Input } from "@/components/ui/input";
 import { Modal } from "@/components/ui/modal";
 import { Select } from "@/components/ui/select";
+import { useToast } from "@/components/ui/toast";
 import type { CardAssignee } from "@/lib/types";
 import { LABEL_COLORS, cn } from "@/lib/utils";
 import { useBoard } from "@/providers/board-provider";
@@ -60,6 +62,8 @@ export function CardDialog({
     deleteAttachment,
     getAttachmentUrl,
   } = useBoard();
+  const confirm = useConfirm();
+  const { toast } = useToast();
 
   const card = useMemo(() => {
     if (!cardId) return null;
@@ -411,6 +415,7 @@ export function CardDialog({
                   try {
                     setActionError(null);
                     await duplicateCard(card.id);
+                    toast("Card duplicada");
                     onClose();
                   } catch (err) {
                     setActionError(
@@ -426,6 +431,7 @@ export function CardDialog({
                 size="sm"
                 onClick={() => {
                   archiveCard(card.id, true);
+                  toast("Card archivada");
                   onClose();
                 }}
               >
@@ -434,9 +440,16 @@ export function CardDialog({
               <Button
                 variant="danger"
                 size="sm"
-                onClick={() => {
-                  if (confirm("¿Eliminar esta card?")) {
+                onClick={async () => {
+                  const ok = await confirm({
+                    title: "Eliminar card",
+                    message: "¿Eliminar esta card? Esta acción no se puede deshacer.",
+                    confirmLabel: "Eliminar",
+                    danger: true,
+                  });
+                  if (ok) {
                     deleteCard(card.id);
+                    toast("Card eliminada");
                     onClose();
                   }
                 }}

@@ -3,6 +3,7 @@
 import { Button } from "@/components/ui/button";
 import { Input, Textarea } from "@/components/ui/input";
 import { Modal } from "@/components/ui/modal";
+import { useToast } from "@/components/ui/toast";
 import { createClient } from "@/lib/supabase/client";
 import { LIST_COLORS } from "@/lib/utils";
 import { useRouter } from "next/navigation";
@@ -20,6 +21,7 @@ export function CreateBoardDialog({
   onCreated?: () => void;
 }) {
   const router = useRouter();
+  const { toast } = useToast();
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [loading, setLoading] = useState(false);
@@ -69,6 +71,7 @@ export function CreateBoardDialog({
       setDescription("");
       onClose();
       onCreated?.();
+      toast("Tablero creado");
       router.push(`/boards/${boardId}`);
       router.refresh();
     } catch (err) {

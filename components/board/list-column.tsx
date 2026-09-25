@@ -2,7 +2,9 @@
 
 import { CardItem } from "@/components/board/card-item";
 import { Button } from "@/components/ui/button";
+import { useConfirm } from "@/components/ui/confirm";
 import { Dropdown, DropdownItem } from "@/components/ui/dropdown";
+import { useToast } from "@/components/ui/toast";
 import type { BoardList, CardWithLabels } from "@/lib/types";
 import { LIST_COLORS, cn } from "@/lib/utils";
 import { useBoard } from "@/providers/board-provider";
@@ -32,6 +34,8 @@ interface Props {
 
 export function ListColumn({ list, canEdit, onCardClick }: Props) {
   const { updateList, archiveList, deleteList, addCard } = useBoard();
+  const confirm = useConfirm();
+  const { toast } = useToast();
   const [editingTitle, setEditingTitle] = useState(false);
   const [draft, setDraft] = useState(list.title);
   const [adding, setAdding] = useState(false);
@@ -186,16 +190,25 @@ export function ListColumn({ list, canEdit, onCardClick }: Props) {
                   onClick={() => {
                     close();
                     archiveList(list.id, true);
+                    toast("Lista archivada");
                   }}
                 >
                   <Archive className="h-4 w-4" /> Archivar lista
                 </DropdownItem>
                 <DropdownItem
                   danger
-                  onClick={() => {
+                  onClick={async () => {
                     close();
-                    if (confirm(`¿Eliminar la lista "${list.title}" y sus cards?`))
-                      deleteList(list.id);
+                    const ok = await confirm({
+                      title: "Eliminar lista",
+                      message: `¿Eliminar la lista "${list.title}" y sus cards?`,
+                      confirmLabel: "Eliminar",
+                      danger: true,
+                    });
+                    if (ok) {
+                      await deleteList(list.id);
+                      toast("Lista eliminada");
+                    }
                   }}
                 >
                   <Trash2 className="h-4 w-4" /> Eliminar lista

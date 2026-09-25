@@ -1,6 +1,8 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import { RuntimeDiagnostics } from "@/components/layout/runtime-diagnostics";
+import { ConfirmProvider } from "@/components/ui/confirm";
+import { ToastProvider } from "@/components/ui/toast";
 import { AuthProvider } from "@/providers/auth-provider";
 import { ThemeProvider } from "@/providers/theme-provider";
 import { createClient } from "@/lib/supabase/server";
@@ -17,8 +19,19 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Kanban",
+  title: {
+    default: "Kanban",
+    template: "%s · Kanban",
+  },
   description: "Tableros kanban en tiempo real con Supabase",
+  applicationName: "Kanban",
+};
+
+export const viewport: Viewport = {
+  themeColor: [
+    { media: "(prefers-color-scheme: light)", color: "#f5f6f8" },
+    { media: "(prefers-color-scheme: dark)", color: "#0b0b0f" },
+  ],
 };
 
 export default async function RootLayout({ children }: LayoutProps<"/">) {
@@ -35,7 +48,11 @@ export default async function RootLayout({ children }: LayoutProps<"/">) {
     >
       <body className="min-h-full">
         <ThemeProvider>
-          <AuthProvider initialUser={user}>{children}</AuthProvider>
+          <ToastProvider>
+            <ConfirmProvider>
+              <AuthProvider initialUser={user}>{children}</AuthProvider>
+            </ConfirmProvider>
+          </ToastProvider>
         </ThemeProvider>
         <script
           dangerouslySetInnerHTML={{

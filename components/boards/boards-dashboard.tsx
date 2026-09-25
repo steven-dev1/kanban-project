@@ -2,9 +2,11 @@
 
 import { CreateBoardDialog } from "@/components/boards/create-board-dialog";
 import { Button } from "@/components/ui/button";
+import { useConfirm } from "@/components/ui/confirm";
 import { Dropdown, DropdownItem } from "@/components/ui/dropdown";
 import { Input } from "@/components/ui/input";
 import { Modal } from "@/components/ui/modal";
+import { useToast } from "@/components/ui/toast";
 import { createClient } from "@/lib/supabase/client";
 import type { Board } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -33,6 +35,8 @@ export function BoardsDashboard() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { user } = useAuth();
+  const confirm = useConfirm();
+  const { toast } = useToast();
   const [boards, setBoards] = useState<BoardRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [createOpen, setCreateOpen] = useState(searchParams.get("new") === "1");
@@ -61,13 +65,17 @@ export function BoardsDashboard() {
   }, [supabase, load]);
 
   async function deleteBoard(board: Board) {
-    if (
-      !confirm(`¿Eliminar el tablero "${board.title}"? Esta acción no se puede deshacer.`)
-    )
-      return;
+    const ok = await confirm({
+      title: "Eliminar tablero",
+      message: `¿Eliminar el tablero "${board.title}"? Esta acción no se puede deshacer.`,
+      confirmLabel: "Eliminar",
+      danger: true,
+    });
+    if (!ok) return;
     setBusy(true);
     await supabase.from("boards").delete().eq("id", board.id);
     setBusy(false);
+    toast("Tablero eliminado");
     load();
   }
 
@@ -78,6 +86,7 @@ export function BoardsDashboard() {
     setBusy(false);
     setRenaming(null);
     setNewTitle("");
+    toast("Tablero renombrado");
     load();
     router.refresh();
   }
@@ -87,6 +96,7 @@ export function BoardsDashboard() {
       .from("boards")
       .update({ is_paused: !board.is_paused })
       .eq("id", board.id);
+    toast(board.is_paused ? "Tablero reanudado" : "Tablero pausado");
     load();
   }
 
@@ -137,7 +147,7 @@ export function BoardsDashboard() {
               return (
                 <div
                   key={board.id}
-                  className="group relative flex flex-col rounded-2xl border border-border bg-card p-5 transition-shadow hover:shadow-lg"
+                  className="group relative flex flex-col rounded-2xl border border-border bg-card p-5 transition-all hover:-translate-y-0.5 hover:border-primary/30 hover:shadow-lg"
                 >
                   <Link
                     href={`/boards/${board.id}`}
