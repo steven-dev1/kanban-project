@@ -1,54 +1,93 @@
-import type { Profile } from "@/lib/types";
 import type {
-  DocSource,
+  DatabaseType,
   Environment,
-  EnvStatus,
-  KnowledgeRole,
-  OracleObject,
+  EnvironmentStatus,
   OracleObjectType,
   RelationType,
-  SourceType,
-} from "@/lib/knowledge/types";
+  SqlCategory,
+} from "@/lib/types";
 
-export const OBJECT_TYPES: { value: OracleObjectType; label: string }[] = [
-  { value: "TABLE", label: "Tabla" },
-  { value: "VIEW", label: "Vista" },
-  { value: "PROCEDURE", label: "Procedure" },
-  { value: "FUNCTION", label: "Function" },
-  { value: "PACKAGE", label: "Package" },
-  { value: "TRIGGER", label: "Trigger" },
-  { value: "SEQUENCE", label: "Sequence" },
-  { value: "SYNONYM", label: "Synonym" },
-  { value: "MATERIALIZED_VIEW", label: "Vista materializada" },
+export const OBJECT_TYPES: OracleObjectType[] = [
+  "TABLE",
+  "VIEW",
+  "PROCEDURE",
+  "FUNCTION",
+  "PACKAGE",
+  "TRIGGER",
+  "SEQUENCE",
+  "SYNONYM",
+  "MATERIALIZED_VIEW",
 ];
 
-export const ENVIRONMENTS: { value: Environment; label: string; color: string }[] = [
-  { value: "DEV", label: "DEV", color: "#3b82f6" },
-  { value: "QA", label: "QA", color: "#f59e0b" },
-  { value: "PRODUCTIVO", label: "PRODUCTIVO", color: "#22c55e" },
+export const OBJECT_TYPE_LABELS: Record<OracleObjectType, string> = {
+  TABLE: "Tabla",
+  VIEW: "Vista",
+  PROCEDURE: "Procedure",
+  FUNCTION: "Function",
+  PACKAGE: "Package",
+  TRIGGER: "Trigger",
+  SEQUENCE: "Secuencia",
+  SYNONYM: "Sinónimo",
+  MATERIALIZED_VIEW: "Vista materializada",
+};
+
+export const OBJECT_TYPE_COLORS: Record<OracleObjectType, string> = {
+  TABLE: "#3b82f6",
+  VIEW: "#14b8a6",
+  PROCEDURE: "#8b5cf6",
+  FUNCTION: "#f59e0b",
+  PACKAGE: "#ec4899",
+  TRIGGER: "#ef4444",
+  SEQUENCE: "#06b6d4",
+  SYNONYM: "#64748b",
+  MATERIALIZED_VIEW: "#84cc16",
+};
+
+export const ENVIRONMENTS: Environment[] = ["DEV", "QA", "PRODUCTIVO"];
+
+export const ENVIRONMENT_LABELS: Record<Environment, string> = {
+  DEV: "Desarrollo",
+  QA: "Pruebas",
+  PRODUCTIVO: "Productivo",
+};
+
+export const ENVIRONMENT_SHORT: Record<Environment, string> = {
+  DEV: "DEV",
+  QA: "QA",
+  PRODUCTIVO: "PROD",
+};
+
+export const ENVIRONMENT_COLORS: Record<Environment, string> = {
+  DEV: "#3b82f6",
+  QA: "#f59e0b",
+  PRODUCTIVO: "#22c55e",
+};
+
+export const ENVIRONMENT_STATUSES: EnvironmentStatus[] = ["ACTIVE", "INACTIVE", "UNKNOWN"];
+
+export const ENVIRONMENT_STATUS_LABELS: Record<EnvironmentStatus, string> = {
+  ACTIVE: "Activo",
+  INACTIVE: "Inactivo",
+  UNKNOWN: "Desconocido",
+};
+
+export const RELATION_TYPES: RelationType[] = [
+  "DEPENDS_ON",
+  "USES",
+  "RELATED_TO",
+  "CALLS",
+  "REFERENCES",
 ];
 
-export const ENV_STATUSES: { value: EnvStatus; label: string }[] = [
-  { value: "ACTIVE", label: "Activo" },
-  { value: "INACTIVE", label: "Inactivo" },
-  { value: "UNKNOWN", label: "Desconocido" },
-];
+export const RELATION_TYPE_LABELS: Record<RelationType, string> = {
+  DEPENDS_ON: "Depende de",
+  USES: "Usa",
+  RELATED_TO: "Relacionado con",
+  CALLS: "Llama a",
+  REFERENCES: "Referencia a",
+};
 
-export const SOURCE_TYPES: { value: SourceType; label: string }[] = [
-  { value: "SOURCE", label: "Source" },
-  { value: "SPECIFICATION", label: "Specification" },
-  { value: "BODY", label: "Body" },
-];
-
-export const RELATION_TYPES: { value: RelationType; label: string }[] = [
-  { value: "DEPENDS_ON", label: "Depende de" },
-  { value: "USES", label: "Usa" },
-  { value: "CALLS", label: "Llama a" },
-  { value: "REFERENCES", label: "Referencia" },
-  { value: "RELATED_TO", label: "Relacionado con" },
-];
-
-export const SNIPPET_CATEGORIES = [
+export const SQL_CATEGORIES: SqlCategory[] = [
   "Consulta",
   "Diagnóstico",
   "Validación",
@@ -57,44 +96,31 @@ export const SNIPPET_CATEGORIES = [
   "Mantenimiento",
   "Utilidad",
   "Otro",
-] as const;
+];
 
-export const DATABASE_TYPES = [
+export const DATABASE_TYPES: DatabaseType[] = [
   "Oracle",
   "PostgreSQL",
   "MySQL",
   "SQL Server",
   "Otro",
-] as const;
-
-export const DOC_SOURCES: { value: DocSource; label: string }[] = [
-  { value: "MANUAL", label: "Manual" },
-  { value: "ORACLE", label: "Importado de Oracle" },
 ];
 
-export const KNOWLEDGE_ROLES: { value: KnowledgeRole; label: string }[] = [
-  { value: "viewer", label: "Usuario" },
-  { value: "editor", label: "Editor" },
-  { value: "admin", label: "Administrador" },
+export const TAG_COLORS = [
+  "#ef4444",
+  "#f97316",
+  "#f59e0b",
+  "#84cc16",
+  "#22c55e",
+  "#14b8a6",
+  "#06b6d4",
+  "#3b82f6",
+  "#6366f1",
+  "#8b5cf6",
+  "#d946ef",
+  "#ec4899",
+  "#64748b",
 ];
 
-export const ARGUMENT_DIRECTIONS = ["IN", "OUT", "IN OUT"] as const;
-
-/** Permisos del módulo: reutiliza el rol guardado en profiles. */
-export const canEditKnowledge = (profile: Profile | null) =>
-  profile?.knowledge_role === "editor" || profile?.knowledge_role === "admin";
-
-export const canAdminKnowledge = (profile: Profile | null) =>
-  profile?.knowledge_role === "admin";
-
-export const objectFullName = (object: Pick<OracleObject, "schema_name" | "object_name">) =>
-  `${object.schema_name}.${object.object_name}`;
-
-export const objectHref = (object: Pick<OracleObject, "id">) =>
-  `/hub/objects/${object.id}`;
-
-export const objectTypeLabel = (type: OracleObjectType) =>
-  OBJECT_TYPES.find((t) => t.value === type)?.label ?? type;
-
-export const environmentColor = (env?: Environment | null) =>
-  ENVIRONMENTS.find((e) => e.value === env)?.color ?? "#94a3b8";
+export const DEFAULT_OBJECT_TYPE: OracleObjectType = "TABLE";
+export const DEFAULT_ENVIRONMENT: Environment = "DEV";

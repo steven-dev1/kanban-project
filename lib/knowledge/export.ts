@@ -1,105 +1,114 @@
+import { ensureTrailingNewline, objectCodeFileName, sanitizeFileName } from "@/lib/knowledge/format";
 import { createZip, type ZipEntry } from "@/lib/knowledge/zip";
+import type { OracleObjectWithRelations, SqlSnippetWithRelations } from "@/lib/types";
 
-const INVALID_CHARS = /[\\/:*?"<>|\u0000-\u001f]+/g;
+const FOLDER_BY_TYPE: Record<string, string> = {
+  TABLE: "tables",
+  VIEW: "views",
+  PROCEDURE: "procedures",
+  FUNCTION: "functions",
+  PACKAGE: "packages",
+  TRIGGER: "triggers",
+};
 
-/** Limpia caracteres inválidos para nombres de archivo. */
-export function sanitizeFileName(name: string): string {
-  return (name ?? "")
-    .replace(INVALID_CHARS, "_")
-    .replace(/\s+/g, "_")
-    .replace(/_{2,}/g, "_")
-    .replace(/^_+|_+$/g, "")
-    .slice(0, 120) || "archivo";
+const CODE_TYPES = new Set(["PROCEDURE", "FUNCTION", "PACKAGE"]);
+
+function latestCode(object: OracleObjectWithRelations, sourceType: "SOURCE" | "SPECIFICATION" | "BODY") {
+  const versions = object.code_versions
+    .filter((v) => v.source_type === sourceType)
+    .sort((a, b) => a.created_at.localeCompare(b.created_at));
+  return versions[versions.length - 1] ?? null;
 }
 
-/** YYYYMMDD en hora local. */
-export function todayStamp(now: Date = new Date()): string {
-  const y = now.getFullYear();
-  const m = `${now.getMonth() + 1}`.padStart(2, "0");
-  const d = `${now.getDate()}`.padStart(2, "0");
-  return `${y}${m}${d}`;
-}
-
-/**
- * NOMBRE_OBJETO_AMBIENTE_FECHA.sql
- * Las partes vacías se omiten: CONSULTA_TIQUETES_20260925.sql
- */
-export function buildExportName(
-  parts: (string | null | undefined)[],
-  ext: "sql" | "txt" = "sql",
-): string {
-  const cleaned = parts
-    .filter((part): part is string => !!part && part.trim().length > 0)
-    .map((part) => sanitizeFileName(part.trim().toUpperCase()));
-  cleaned.push(todayStamp());
-  return `${cleaned.join("_")}.${ext}`;
-}
-
-export function downloadBlobFile(filename: string, blob: Blob): void {
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement("a");
-  anchor.href = url;
-  anchor.download = filename;
-  document.body.appendChild(anchor);
-  anchor.click();
-  anchor.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
-}
-
-export function downloadTextFile(
-  filename: string,
-  content: string,
-  mime = "text/plain;charset=utf-8",
-): void {
-  downloadBlobFile(filename, new Blob([content], { type: mime }));
-}
-
-export async function copyText(text: string): Promise<boolean> {
-  try {
-    if (navigator.clipboard?.writeText) {
-      await navigator.clipboard.writeText(text);
-      return true;
+function documentationFor(object: OracleObjectWithRelations) {
+  const lines: string[] = [
+    `${object.schema_name}.${object.object_name} (${object.object_type})`,
+    object.description ? `Descripción: ${object.description}` : "",
+    object.functional_description ? `Funcional: ${object.functional_description}` : "",
+    object.module ? `Módulo: ${object.module}` : "",
+    object.owner ? `Responsable: ${object.owner}` : "",
+    "",
+    "COLUMNAS",
+  ];
+  if (object.columns.length === 0) lines.push("(sin columnas documentadas)");
+  for (const column of object.columns) {
+    const type = `${column.data_type ?? ""}${column.data_length ? `(${column.data_length})` : ""}`;
+    lines.push(
+      `- ${column.column_name} ${type} ${column.nullable ? "NULL" : "NOT NULL"}${
+        column.description ? ` — ${column.description}` : ""
+      }`,
+    );
+  }
+  const values = object.columns.flatMap((c) => c.values);
+  if (values.length) {
+    lines.push("", "VALORES DOCUMENTADOS");
+    for (const column of object.columns) {
+      for (const value of column.values) {
+        lines.push(`- ${column.column_name} = ${value.value}${value.meaning ? ` → ${value.meaning}` : ""}`);
+      }
     }
-  } catch {
-    // continúa con el fallback
   }
-  try {
-    const area = document.createElement("textarea");
-    area.value = text;
-    area.setAttribute("readonly", "");
-    area.style.position = "fixed";
-    area.style.opacity = "0";
-    document.body.appendChild(area);
-    area.select();
-    const ok = document.execCommand("copy");
-    area.remove();
-    return ok;
-  } catch {
-    return false;
+  if (object.notes) lines.push("", "NOTAS", object.notes);
+  return lines.join("\n");
+}
+
+export function exportEntryForObject(object: OracleObjectWithRelations): ZipEntry {
+  const folder = FOLDER_BY_TYPE[object.object_type] ?? "objects";
+  if (CODE_TYPES.has(object.object_type)) {
+    if (object.object_type === "PACKAGE") {
+      const spec = latestCode(object, "SPECIFICATION");
+      const body = latestCode(object, "BODY");
+      const content = [spec?.source_code, body?.source_code]
+        .filter(Boolean)
+        .map((code) => ensureTrailingNewline(code as string))
+        .join("\n");
+      return {
+        path: `${folder}/${sanitizeFileName(object.object_name, "PACKAGE")}.sql`,
+        content: content || `-- ${object.schema_name}.${object.object_name}\n`,
+      };
+    }
+    const source = latestCode(object, "SOURCE");
+    return {
+      path: `${folder}/${sanitizeFileName(object.object_name, "OBJECT")}.sql`,
+      content: source?.source_code ?? `-- ${object.schema_name}.${object.object_name}\n`,
+    };
   }
+  return {
+    path: `${folder}/${sanitizeFileName(object.object_name, "OBJECT")}_doc.txt`,
+    content: documentationFor(object),
+  };
 }
 
-/** Package completo: Specification primero y Body después. */
-export function packageFullSource(
-  specification: string | null | undefined,
-  body: string | null | undefined,
-): string {
-  return [specification?.trim() ?? "", body?.trim() ?? ""]
-    .filter(Boolean)
-    .join("\n\n/\n\n");
+export function buildObjectsZip(
+  objects: OracleObjectWithRelations[],
+  date = new Date(),
+): { blob: Blob; fileName: string } {
+  const entries = objects.map(exportEntryForObject);
+  return { blob: createZip(entries, date), fileName: zipName(date) };
 }
 
-export interface ExportFolderItem {
-  folder: string;
-  fileName: string;
-  content: string;
+export function exportEntryForSnippet(snippet: SqlSnippetWithRelations): ZipEntry {
+  const name = snippetFileNameBase(snippet.title);
+  return { path: `sql/${name}.sql`, content: snippet.sql_code };
 }
 
-/** Exportación múltiple a .zip (sin servicios externos). */
-export function exportManyAsZip(items: ExportFolderItem[], zipName?: string): void {
-  const entries: ZipEntry[] = items.map((item) => ({
-    path: `${item.folder}/${item.fileName}`,
-    content: item.content,
-  }));
-  downloadBlobFile(zipName ?? `oracle_export_${todayStamp()}.zip`, createZip(entries));
+export function buildSnippetsZip(
+  snippets: SqlSnippetWithRelations[],
+  date = new Date(),
+): { blob: Blob; fileName: string } {
+  const entries = snippets.map(exportEntryForSnippet);
+  return { blob: createZip(entries, date), fileName: zipName(date) };
 }
+
+export function snippetFileNameBase(title: string) {
+  return sanitizeFileName(title, "CONSULTA").toUpperCase();
+}
+
+export function zipName(date: Date) {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const d = String(date.getDate()).padStart(2, "0");
+  return `oracle_export_${y}${m}${d}.zip`;
+}
+
+export { objectCodeFileName };

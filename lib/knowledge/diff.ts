@@ -1,122 +1,116 @@
-export type DiffKind = "equal" | "added" | "removed";
+export type DiffType = "same" | "added" | "removed";
 
 export interface DiffLine {
-  kind: DiffKind;
+  type: DiffType;
   text: string;
-  oldNo?: number;
-  newNo?: number;
+  oldNumber: number | null;
+  newNumber: number | null;
 }
 
-export interface DiffSummary {
+export interface DiffStats {
   added: number;
   removed: number;
-  equal: number;
+  modified: number;
+  unchanged: number;
 }
 
-/** Líneas máximas comparadas con LCS exacto (más allá se usa fallback). */
-const MAX_CELLS = 2_000_000;
+const MAX_LINES = 4000;
 
-function split(text: string): string[] {
-  return (text ?? "").replace(/\r\n/g, "\n").split("\n");
+function split(text: string) {
+  return (text ?? "").replace(/\r\n?/g, "\n").split("\n");
 }
 
 /**
- * Diff de líneas basado en LCS con recorte de prefijo/sufijo común.
- * Suficiente para comparar versiones de código PL/SQL.
+ * Line based diff using a longest-common-subsequence table.
+ * No external dependency; falls back to a naive diff for very large inputs.
  */
 export function diffLines(oldText: string, newText: string): DiffLine[] {
   const a = split(oldText);
   const b = split(newText);
 
-  let start = 0;
-  while (start < a.length && start < b.length && a[start] === b[start]) start++;
+  if (a.length > MAX_LINES || b.length > MAX_LINES) {
+    return naiveDiff(a, b);
+  }
 
-  let endA = a.length;
-  let endB = b.length;
-  while (endA > start && endB > start && a[endA - 1] === b[endB - 1]) {
-    endA--;
-    endB--;
+  const n = a.length;
+  const m = b.length;
+  const table: number[][] = Array.from({ length: n + 1 }, () => new Array<number>(m + 1).fill(0));
+
+  for (let i = n - 1; i >= 0; i--) {
+    for (let j = m - 1; j >= 0; j--) {
+      table[i][j] = a[i] === b[j] ? table[i + 1][j + 1] + 1 : Math.max(table[i + 1][j], table[i][j + 1]);
+    }
   }
 
   const result: DiffLine[] = [];
-  for (let i = 0; i < start; i++) {
-    result.push({ kind: "equal", text: a[i], oldNo: i + 1, newNo: i + 1 });
-  }
-
-  const coreA = a.slice(start, endA);
-  const coreB = b.slice(start, endB);
-
-  if (coreA.length * coreB.length > MAX_CELLS) {
-    coreA.forEach((text, i) =>
-      result.push({ kind: "removed", text, oldNo: start + i + 1 }),
-    );
-    coreB.forEach((text, i) =>
-      result.push({ kind: "added", text, newNo: start + i + 1 }),
-    );
-  } else {
-    const n = coreA.length;
-    const m = coreB.length;
-    const lcs = new Uint32Array((n + 1) * (m + 1));
-    for (let i = n - 1; i >= 0; i--) {
-      for (let j = m - 1; j >= 0; j--) {
-        lcs[i * (m + 1) + j] =
-          coreA[i] === coreB[j]
-            ? lcs[(i + 1) * (m + 1) + j + 1] + 1
-            : Math.max(lcs[(i + 1) * (m + 1) + j], lcs[i * (m + 1) + j + 1]);
-      }
-    }
-
-    let i = 0;
-    let j = 0;
-    while (i < n && j < m) {
-      if (coreA[i] === coreB[j]) {
-        result.push({
-          kind: "equal",
-          text: coreA[i],
-          oldNo: start + i + 1,
-          newNo: start + j + 1,
-        });
-        i++;
-        j++;
-      } else if (lcs[(i + 1) * (m + 1) + j] >= lcs[i * (m + 1) + j + 1]) {
-        result.push({ kind: "removed", text: coreA[i], oldNo: start + i + 1 });
-        i++;
-      } else {
-        result.push({ kind: "added", text: coreB[j], newNo: start + j + 1 });
-        j++;
-      }
-    }
-    while (i < n) {
-      result.push({ kind: "removed", text: coreA[i], oldNo: start + i + 1 });
+  let i = 0;
+  let j = 0;
+  while (i < n && j < m) {
+    if (a[i] === b[j]) {
+      result.push({ type: "same", text: a[i], oldNumber: i + 1, newNumber: j + 1 });
       i++;
-    }
-    while (j < m) {
-      result.push({ kind: "added", text: coreB[j], newNo: start + j + 1 });
+      j++;
+    } else if (table[i + 1][j] >= table[i][j + 1]) {
+      result.push({ type: "removed", text: a[i], oldNumber: i + 1, newNumber: null });
+      i++;
+    } else {
+      result.push({ type: "added", text: b[j], oldNumber: null, newNumber: j + 1 });
       j++;
     }
   }
-
-  for (let k = 0; k < a.length - endA; k++) {
-    const text = a[endA + k];
-    result.push({
-      kind: "equal",
-      text,
-      oldNo: endA + k + 1,
-      newNo: endB + k + 1,
-    });
+  while (i < n) {
+    result.push({ type: "removed", text: a[i], oldNumber: i + 1, newNumber: null });
+    i++;
   }
-
+  while (j < m) {
+    result.push({ type: "added", text: b[j], oldNumber: null, newNumber: j + 1 });
+    j++;
+  }
   return result;
 }
 
-export function summarizeDiff(lines: DiffLine[]): DiffSummary {
-  return lines.reduce<DiffSummary>(
-    (acc, line) => {
-      if (line.kind === "added") acc.added++;
-      else if (line.kind === "removed") acc.removed++;
-      else acc.equal++;
-      return acc;
-    },
-    { added: 0, removed: 0, equal: 0 },
-  );
+function naiveDiff(a: string[], b: string[]): DiffLine[] {
+  const result: DiffLine[] = [];
+  const max = Math.max(a.length, b.length);
+  for (let i = 0; i < max; i++) {
+    if (a[i] === b[i]) {
+      result.push({ type: "same", text: a[i] ?? "", oldNumber: i + 1, newNumber: i + 1 });
+    } else {
+      if (a[i] !== undefined) {
+        result.push({ type: "removed", text: a[i], oldNumber: i + 1, newNumber: null });
+      }
+      if (b[i] !== undefined) {
+        result.push({ type: "added", text: b[i], oldNumber: null, newNumber: i + 1 });
+      }
+    }
+  }
+  return result;
+}
+
+/**
+ * Counts changes. A removed block immediately followed by an added block is
+ * reported as "modified" (pairs), the remainder as pure adds/removes.
+ */
+export function diffStats(lines: DiffLine[]): DiffStats {
+  let added = 0;
+  let removed = 0;
+  let modified = 0;
+  let unchanged = 0;
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (line.type === "same") {
+      unchanged++;
+      continue;
+    }
+    if (line.type === "removed" && lines[i + 1]?.type === "added") {
+      modified++;
+      i++; // skip the paired added line
+      continue;
+    }
+    if (line.type === "added") added++;
+    else removed++;
+  }
+
+  return { added, removed, modified, unchanged };
 }

@@ -1,17 +1,22 @@
+/**
+ * Minimal ZIP writer (STORE / no compression) used for multi-file exports.
+ * Implemented locally to avoid adding a dependency.
+ */
+
 export interface ZipEntry {
-  /** Ruta dentro del zip, p. ej. "packages/PKG_TIQUETES.sql" */
+  /** Path inside the archive, e.g. "packages/PKG_TIQUETES.sql" */
   path: string;
   content: string;
 }
 
 const CRC_TABLE = (() => {
   const table = new Uint32Array(256);
-  for (let i = 0; i < 256; i++) {
-    let c = i;
+  for (let n = 0; n < 256; n++) {
+    let c = n;
     for (let k = 0; k < 8; k++) {
       c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
     }
-    table[i] = c >>> 0;
+    table[n] = c >>> 0;
   }
   return table;
 })();
@@ -25,99 +30,113 @@ function crc32(bytes: Uint8Array): number {
 }
 
 function dosDateTime(date: Date) {
-  const year = Math.max(1980, date.getFullYear());
-  return {
-    time:
-      (date.getHours() << 11) |
-      (date.getMinutes() << 5) |
-      (Math.floor(date.getSeconds() / 2) & 0x1f),
-    date:
-      ((year - 1980) << 9) | ((date.getMonth() + 1) << 5) | date.getDate(),
-  };
+  const time =
+    (date.getHours() << 11) | (date.getMinutes() << 5) | Math.floor(date.getSeconds() / 2);
+  const dosDate =
+    ((date.getFullYear() - 1980) << 9) | ((date.getMonth() + 1) << 5) | date.getDate();
+  return { time: time & 0xffff, date: dosDate & 0xffff };
 }
 
-function concat(chunks: Uint8Array[]): Uint8Array {
-  const total = chunks.reduce((acc, chunk) => acc + chunk.length, 0);
-  const out = new Uint8Array(total);
-  let offset = 0;
-  for (const chunk of chunks) {
-    out.set(chunk, offset);
-    offset += chunk.length;
+class ByteWriter {
+  private chunks: Uint8Array[] = [];
+  length = 0;
+
+  push(bytes: Uint8Array) {
+    this.chunks.push(bytes);
+    this.length += bytes.length;
   }
-  return out;
+
+  u16(value: number) {
+    const b = new Uint8Array(2);
+    b[0] = value & 0xff;
+    b[1] = (value >>> 8) & 0xff;
+    this.push(b);
+  }
+
+  u32(value: number) {
+    const b = new Uint8Array(4);
+    b[0] = value & 0xff;
+    b[1] = (value >>> 8) & 0xff;
+    b[2] = (value >>> 16) & 0xff;
+    b[3] = (value >>> 24) & 0xff;
+    this.push(b);
+  }
+
+  concat() {
+    const output = new Uint8Array(this.length);
+    let offset = 0;
+    for (const chunk of this.chunks) {
+      output.set(chunk, offset);
+      offset += chunk.length;
+    }
+    return output;
+  }
 }
 
-/**
- * Generador de ZIP "store" (sin compresión) implementado a mano para no
- * añadir dependencias. Suficiente para exportar archivos de texto.
- */
-export function createZip(entries: ZipEntry[], now: Date = new Date()): Blob {
+export function createZip(entries: ZipEntry[], date: Date = new Date()): Blob {
   const encoder = new TextEncoder();
-  const { time, date } = dosDateTime(now);
-  const localParts: Uint8Array[] = [];
-  const centralParts: Uint8Array[] = [];
-  let offset = 0;
+  const { time, date: dosDate } = dosDateTime(date);
+  const writer = new ByteWriter();
+  const central: { name: Uint8Array; crc: number; size: number; offset: number }[] = [];
 
   for (const entry of entries) {
     const nameBytes = encoder.encode(entry.path);
     const dataBytes = encoder.encode(entry.content);
     const crc = crc32(dataBytes);
+    const offset = writer.length;
 
-    const local = new Uint8Array(30 + nameBytes.length);
-    const lv = new DataView(local.buffer);
-    lv.setUint32(0, 0x04034b50, true);
-    lv.setUint16(4, 20, true);
-    lv.setUint16(6, 0x0800, true); // nombres UTF-8
-    lv.setUint16(8, 0, true); // store
-    lv.setUint16(10, time, true);
-    lv.setUint16(12, date, true);
-    lv.setUint32(14, crc, true);
-    lv.setUint32(18, dataBytes.length, true);
-    lv.setUint32(22, dataBytes.length, true);
-    lv.setUint16(26, nameBytes.length, true);
-    lv.setUint16(28, 0, true);
-    local.set(nameBytes, 30);
+    // Local file header
+    writer.u32(0x04034b50);
+    writer.u16(20); // version needed
+    writer.u16(0x0800); // UTF-8 flag
+    writer.u16(0); // method: store
+    writer.u16(time);
+    writer.u16(dosDate);
+    writer.u32(crc);
+    writer.u32(dataBytes.length);
+    writer.u32(dataBytes.length);
+    writer.u16(nameBytes.length);
+    writer.u16(0); // extra length
+    writer.push(nameBytes);
+    writer.push(dataBytes);
 
-    localParts.push(local, dataBytes);
-
-    const central = new Uint8Array(46 + nameBytes.length);
-    const cv = new DataView(central.buffer);
-    cv.setUint32(0, 0x02014b50, true);
-    cv.setUint16(4, 20, true);
-    cv.setUint16(6, 20, true);
-    cv.setUint16(8, 0x0800, true);
-    cv.setUint16(10, 0, true);
-    cv.setUint16(12, time, true);
-    cv.setUint16(14, date, true);
-    cv.setUint32(16, crc, true);
-    cv.setUint32(20, dataBytes.length, true);
-    cv.setUint32(24, dataBytes.length, true);
-    cv.setUint16(28, nameBytes.length, true);
-    cv.setUint16(30, 0, true);
-    cv.setUint16(32, 0, true);
-    cv.setUint16(34, 0, true);
-    cv.setUint16(36, 0, true);
-    cv.setUint32(38, 0, true);
-    cv.setUint32(42, offset, true);
-    central.set(nameBytes, 46);
-
-    centralParts.push(central);
-    offset += local.length + dataBytes.length;
+    central.push({ name: nameBytes, crc, size: dataBytes.length, offset });
   }
 
-  const centralDirectory = concat(centralParts);
-  const eocd = new Uint8Array(22);
-  const ev = new DataView(eocd.buffer);
-  ev.setUint32(0, 0x06054b50, true);
-  ev.setUint16(4, 0, true);
-  ev.setUint16(6, 0, true);
-  ev.setUint16(8, entries.length, true);
-  ev.setUint16(10, entries.length, true);
-  ev.setUint32(12, centralDirectory.length, true);
-  ev.setUint32(16, offset, true);
-  ev.setUint16(20, 0, true);
+  const centralStart = writer.length;
 
-  return new Blob([concat([...localParts, centralDirectory, eocd])], {
-    type: "application/zip",
-  });
+  for (const item of central) {
+    writer.u32(0x02014b50);
+    writer.u16(20); // version made by
+    writer.u16(20); // version needed
+    writer.u16(0x0800);
+    writer.u16(0);
+    writer.u16(time);
+    writer.u16(dosDate);
+    writer.u32(item.crc);
+    writer.u32(item.size);
+    writer.u32(item.size);
+    writer.u16(item.name.length);
+    writer.u16(0); // extra
+    writer.u16(0); // comment
+    writer.u16(0); // disk start
+    writer.u16(0); // internal attrs
+    writer.u32(0); // external attrs
+    writer.u32(item.offset);
+    writer.push(item.name);
+  }
+
+  const centralSize = writer.length - centralStart;
+
+  // End of central directory
+  writer.u32(0x06054b50);
+  writer.u16(0);
+  writer.u16(0);
+  writer.u16(central.length);
+  writer.u16(central.length);
+  writer.u32(centralSize);
+  writer.u32(centralStart);
+  writer.u16(0);
+
+  return new Blob([writer.concat()], { type: "application/zip" });
 }

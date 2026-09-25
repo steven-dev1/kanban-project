@@ -12,7 +12,7 @@ create extension if not exists "pg_trgm";
 -- ---------------------------------------------------------------------------
 
 alter table public.profiles
-  add column if not exists knowledge_role text not null default 'viewer';
+  add column if not exists knowledge_role text not null default 'admin';
 
 do $$
 begin
@@ -27,7 +27,7 @@ end $$;
 
 create or replace function public.knowledge_role_of(p_user uuid)
 returns text language sql security definer set search_path = public stable as $$
-  select coalesce((select knowledge_role from public.profiles where id = p_user), 'viewer');
+  select coalesce((select knowledge_role from public.profiles where id = p_user), 'admin');
 $$;
 
 create or replace function public.is_knowledge_editor(p_user uuid)
@@ -449,8 +449,11 @@ select
 grant select on public.knowledge_stats to authenticated;
 
 -- ---------------------------------------------------------------------------
--- PRIMER ADMINISTRADOR
--- Sustituye el correo por el tuyo y ejecuta esta línea una sola vez:
+-- ROLES DEL MÓDULO
+-- Por defecto todos los usuarios son 'admin' (acceso completo al hub).
+-- Si prefieres que solo editen pero no eliminen, usa 'editor'.
+-- Para aplicarlo a una base ya creada:
 --
--- update public.profiles set knowledge_role = 'admin' where email = 'tu@correo.com';
+--   alter table public.profiles alter column knowledge_role set default 'admin';
+--   update public.profiles set knowledge_role = 'admin';
 -- ============================================================================

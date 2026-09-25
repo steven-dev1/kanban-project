@@ -1,98 +1,153 @@
 export type TokenKind =
-  | "comment"
+  | "plain"
+  | "keyword"
+  | "function"
   | "string"
   | "number"
-  | "keyword"
-  | "builtin"
-  | "identifier"
-  | "operator"
-  | "plain";
+  | "comment"
+  | "operator";
 
-export interface SqlToken {
+export interface Token {
+  text: string;
   kind: TokenKind;
-  value: string;
 }
 
 const KEYWORDS = new Set(
-  `SELECT FROM WHERE AND OR NOT NULL INSERT INTO VALUES UPDATE SET DELETE CREATE OR REPLACE
-   ALTER DROP TABLE VIEW INDEX SEQUENCE TRIGGER PROCEDURE FUNCTION PACKAGE BODY BEGIN END
-   DECLARE EXCEPTION IF THEN ELSE ELSIF LOOP FOR WHILE EXIT RETURN RETURNING IS AS WITH
-   CASE WHEN ORDER BY GROUP HAVING DISTINCT ALL UNION INTERSECT MINUS JOIN LEFT RIGHT INNER
-   OUTER FULL CROSS ON USING IN EXISTS BETWEEN LIKE IS NULL DEFAULT CONSTRAINT PRIMARY KEY
-   FOREIGN REFERENCES UNIQUE CHECK GRANT REVOKE COMMIT ROLLBACK SAVEPOINT LOCK CURSOR FETCH
-   OPEN CLOSE BULK COLLECT LIMIT FORALL PRAGMA AUTHID DETERMINISTIC PARALLEL_ENABLE RESULT_CACHE
-   OVER PARTITION ROWS RANGE PRECEDING FOLLOWING CURRENT ROW NUMBER ASC DESC NOCACHE CACHE
-   MINVALUE MAXVALUE START INCREMENT CYCLE NOCYCLE MATERIALIZED REFRESH FAST COMPLETE
-   FORCE NOFORCE ENABLE DISABLE VALIDATE NOVALIDATE COMMENT COLUMN TYPE RECORD SUBTYPE
-   CONSTANT ROWTYPE PCTFREE INITRANS STORAGE TABLESPACE NOLOGGING LOGGING TRUNCATE MERGE
-   MATCHED SOURCE TARGET RAISE GOTO LABEL OUT NOCOPY PIPE PIPELINED ROW CONSTRUCTOR`
-    .split(/\s+/)
-    .filter(Boolean)
-    .map((k) => k.toUpperCase()),
+  (
+    "select from where and or not null is in exists between like order by group having " +
+    "join left right inner outer full on as distinct union all intersect minus insert into " +
+    "values update set delete create replace table view index sequence procedure function " +
+    "package body trigger begin end declare if then else elsif loop for while return exit " +
+    "cursor open fetch close exception when others raise commit rollback savepoint pragma " +
+    "type subtype record constant out nocopy default case merge using matched partition over " +
+    "rowid rownum sysdate systimestamp dual with asc desc primary foreign key references " +
+    "constraint check unique grant revoke analyze describe explain truncate drop alter add " +
+    "modify rename column number varchar2 varchar nvarchar2 char nchar clob blob date " +
+    "timestamp interval boolean integer int decimal float raw long rowtype of"
+  ).split(" "),
 );
 
-const BUILTINS = new Set(
-  `COUNT SUM AVG MIN MAX NVL NVL2 DECODE COALESCE TO_CHAR TO_DATE TO_NUMBER SUBSTR SUBSTRING
-   INSTR LENGTH TRIM LTRIM RTRIM UPPER LOWER INITCAP REPLACE TRANSLATE ROUND TRUNC MOD ABS
-   SIGN CEIL FLOOR POWER SQRT GREATEST LEAST LISTAGG ROW_NUMBER RANK DENSE_RANK LAG LEAD
-   FIRST_VALUE LAST_VALUE SYSDATE SYSTIMESTAMP CURRENT_DATE USERENV SYS_CONTEXT EMPTY_CLOB
-   EMPTY_BLOB DBMS_OUTPUT DBMS_LOB UTL_FILE REGEXP_LIKE REGEXP_REPLACE REGEXP_SUBSTR CAST
-   EXTRACT XMLAGG JSON_VALUE JSON_OBJECT NEXTVAL CURRVAL RAISE_APPLICATION_ERROR SQLERRM
-   SQLCODE DBMS_UTILITY DBMS_SESSION UTL_RAW`
-    .split(/\s+/)
-    .filter(Boolean)
-    .map((k) => k.toUpperCase()),
-);
+const WORD_RE = /[A-Za-z_][A-Za-z0-9_$#]*/;
 
-const MASTER =
-  /(\/\*[\s\S]*?\*\/|--[^\n]*)|('(?:[^']|'')*'|"(?:[^"]|"")*")|(\b\d+(?:\.\d+)?\b)|([A-Za-z_][A-Za-z0-9_$#]*)|(\s+)|([^\sA-Za-z0-9_])/g;
+interface ScanState {
+  inBlockComment: boolean;
+}
 
-/**
- * Tokenizador ligero de SQL/PLSQL. Devuelve tokens planos para pintarlos con
- * React (sin innerHTML), evitando añadir una librería de highlighting.
- */
-export function tokenizeSql(code: string): SqlToken[] {
-  const tokens: SqlToken[] = [];
-  let cursor = 0;
+function tokenizeLine(line: string, state: ScanState): Token[] {
+  const tokens: Token[] = [];
+  let i = 0;
+  let buffer = "";
 
-  if (!code) return tokens;
-
-  for (const match of code.matchAll(MASTER)) {
-    const index = match.index ?? 0;
-    if (index > cursor) {
-      tokens.push({ kind: "plain", value: code.slice(cursor, index) });
+  const flush = () => {
+    if (buffer) {
+      tokens.push({ text: buffer, kind: "plain" });
+      buffer = "";
     }
-    const [full, comment, str, num, identifier, space, operator] = match;
-    cursor = index + full.length;
+  };
 
-    if (comment) tokens.push({ kind: "comment", value: comment });
-    else if (str) tokens.push({ kind: "string", value: str });
-    else if (num) tokens.push({ kind: "number", value: num });
-    else if (identifier) {
-      const upper = identifier.toUpperCase();
-      if (KEYWORDS.has(upper)) tokens.push({ kind: "keyword", value: identifier });
-      else if (BUILTINS.has(upper)) tokens.push({ kind: "builtin", value: identifier });
-      else tokens.push({ kind: "identifier", value: identifier });
-    } else if (space) tokens.push({ kind: "plain", value: space });
-    else if (operator) tokens.push({ kind: "operator", value: operator });
+  while (i < line.length) {
+    // Continue a block comment started on a previous line.
+    if (state.inBlockComment) {
+      const end = line.indexOf("*/", i);
+      if (end === -1) {
+        tokens.push({ text: line.slice(i), kind: "comment" });
+        return tokens;
+      }
+      tokens.push({ text: line.slice(i, end + 2), kind: "comment" });
+      state.inBlockComment = false;
+      i = end + 2;
+      continue;
+    }
+
+    const rest = line.slice(i);
+
+    if (rest.startsWith("--")) {
+      flush();
+      tokens.push({ text: rest, kind: "comment" });
+      return tokens;
+    }
+    if (rest.startsWith("/*")) {
+      flush();
+      const end = line.indexOf("*/", i + 2);
+      if (end === -1) {
+        tokens.push({ text: rest, kind: "comment" });
+        state.inBlockComment = true;
+        return tokens;
+      }
+      tokens.push({ text: line.slice(i, end + 2), kind: "comment" });
+      i = end + 2;
+      continue;
+    }
+    if (rest.startsWith("'")) {
+      flush();
+      let j = i + 1;
+      while (j < line.length) {
+        if (line[j] === "'") {
+          if (line[j + 1] === "'") {
+            j += 2;
+            continue;
+          }
+          j++;
+          break;
+        }
+        j++;
+      }
+      tokens.push({ text: line.slice(i, j), kind: "string" });
+      i = j;
+      continue;
+    }
+    if (/[0-9]/.test(rest[0])) {
+      const match = rest.match(/^[0-9]+(\.[0-9]+)?/);
+      if (match) {
+        flush();
+        tokens.push({ text: match[0], kind: "number" });
+        i += match[0].length;
+        continue;
+      }
+    }
+    const wordMatch = rest.match(WORD_RE);
+    if (wordMatch && wordMatch.index === 0) {
+      flush();
+      const word = wordMatch[0];
+      const upper = word.toUpperCase();
+      const after = line.slice(i + word.length).replace(/^\s+/, "");
+      if (KEYWORDS.has(upper)) {
+        tokens.push({ text: word, kind: "keyword" });
+      } else if (after.startsWith("(")) {
+        tokens.push({ text: word, kind: "function" });
+      } else {
+        tokens.push({ text: word, kind: "plain" });
+      }
+      i += word.length;
+      continue;
+    }
+    if (/[(),;.=<>!|+\-*/%:]/.test(rest[0])) {
+      flush();
+      const opMatch = rest.match(/^(<>|!=|<=|>=|:=|\|\||[(),;.=<>!|+\-*/%:])/);
+      const op = opMatch ? opMatch[0] : rest[0];
+      tokens.push({ text: op, kind: "operator" });
+      i += op.length;
+      continue;
+    }
+    buffer += line[i];
+    i++;
   }
 
-  if (cursor < code.length) {
-    tokens.push({ kind: "plain", value: code.slice(cursor) });
-  }
-
+  flush();
   return tokens;
 }
 
-/** Divide el código en líneas preservando el resaltado por token. */
-export function tokenizeLines(code: string): SqlToken[][] {
-  const lines: SqlToken[][] = [[]];
-  for (const token of tokenizeSql(code)) {
-    const parts = token.value.split("\n");
-    parts.forEach((part, i) => {
-      if (i > 0) lines.push([]);
-      if (part) lines[lines.length - 1].push({ kind: token.kind, value: part });
-    });
-  }
-  return lines;
+export function tokenizeLines(code: string): Token[][] {
+  const state: ScanState = { inBlockComment: false };
+  return (code ?? "").replace(/\r\n?/g, "\n").split("\n").map((line) => tokenizeLine(line, state));
 }
+
+export const TOKEN_CLASS: Record<TokenKind, string> = {
+  plain: "text-slate-200",
+  keyword: "text-violet-300 font-medium",
+  function: "text-sky-300",
+  string: "text-emerald-300",
+  number: "text-amber-300",
+  comment: "text-slate-500 italic",
+  operator: "text-slate-400",
+};

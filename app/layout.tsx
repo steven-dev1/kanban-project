@@ -1,4 +1,5 @@
 import type { Metadata, Viewport } from "next";
+import type { ReactNode } from "react";
 import { Geist, Geist_Mono } from "next/font/google";
 import { RuntimeDiagnostics } from "@/components/layout/runtime-diagnostics";
 import { ConfirmProvider } from "@/components/ui/confirm";
@@ -34,7 +35,7 @@ export const viewport: Viewport = {
   ],
 };
 
-export default async function RootLayout({ children }: LayoutProps<"/">) {
+export default async function RootLayout({ children }: { children: ReactNode }) {
   const supabase = await createClient();
   const {
     data: { user },
