@@ -58,14 +58,10 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
         <script
           dangerouslySetInnerHTML={{
             __html:
-              "(function(){function s(m){var b=document.getElementById('runtime-errors');if(!b)return;b.setAttribute('data-open','1');var d=document.createElement('div');d.textContent=m;b.appendChild(d);}window.addEventListener('error',function(e){var t=e.target;if(t&&(t.tagName==='SCRIPT'||t.tagName==='LINK')){s('[recurso que fallo] '+t.tagName+' '+(t.src||t.href));}},true);window.addEventListener('unhandledrejection',function(e){s('[promesa] '+((e.reason&&e.reason.message)||String(e.reason)));});})();",
+              "(function(){function s(m){var b=document.getElementById('runtime-errors');if(!b)return;b.setAttribute('data-open','1');var d=document.createElement('div');d.textContent=m;b.appendChild(d);}window.addEventListener('unhandledrejection',function(e){s('[promesa] '+((e.reason&&e.reason.message)||String(e.reason)));});})();",
           }}
         />
         <RuntimeDiagnostics />
-        <div id="boot-warning">
-          El JavaScript del cliente no cargó o la página no se hidrató. Abre la
-          consola (F12) y revisa que <code>/_next/static</code> cargue con 200.
-        </div>
         <div id="runtime-errors" />
       </body>
     </html>

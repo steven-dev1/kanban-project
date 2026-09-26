@@ -4,6 +4,7 @@ import { CodeBlock } from "@/components/knowledge/code-block";
 import { ExportMenu, type ExportAction } from "@/components/knowledge/export-menu";
 import { SnippetDialog } from "@/components/knowledge/snippet-dialog";
 import { TagPicker } from "@/components/knowledge/tag-picker";
+import { SendItemDialog } from "@/components/messages/send-item-dialog";
 import { Field, ObjectTypeBadge, Skeleton } from "@/components/knowledge/ui";
 import { Button } from "@/components/ui/button";
 import { useConfirm } from "@/components/ui/confirm";
@@ -13,7 +14,7 @@ import { useToast } from "@/components/ui/toast";
 import { snippetFileName } from "@/lib/knowledge/format";
 import { recordRecent } from "@/lib/knowledge/recent";
 import { useKnowledge } from "@/providers/knowledge-provider";
-import { AlertTriangle, Pencil, Plus, Star, Trash2, X } from "lucide-react";
+import { AlertTriangle, ArrowLeft, CopyPlus, Download, Pencil, Plus, Send, Star, Trash2, X } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
@@ -27,6 +28,7 @@ export function SnippetDetail({ snippetId }: { snippetId: string }) {
     isAdmin,
     updateSnippet,
     deleteSnippet,
+    duplicateSnippet,
     toggleSnippetFavorite,
     toggleSnippetTag,
     addSnippetParameter,
@@ -40,6 +42,7 @@ export function SnippetDetail({ snippetId }: { snippetId: string }) {
 
   const snippet = snippets.find((s) => s.id === snippetId) ?? null;
   const [editOpen, setEditOpen] = useState(false);
+  const [sendOpen, setSendOpen] = useState(false);
   const [paramName, setParamName] = useState("");
   const [paramType, setParamType] = useState("");
   const [paramDesc, setParamDesc] = useState("");
@@ -128,67 +131,110 @@ export function SnippetDetail({ snippetId }: { snippetId: string }) {
 
   return (
     <div className="flex h-full flex-col">
-      <header className="border-b border-border bg-card px-4 py-4 md:px-6">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div className="min-w-0">
-            <Link href="/knowledge/sql" className="text-xs text-muted-foreground hover:text-foreground">
-              ← Consultas SQL
+      <header className="border-b border-border bg-card px-4 py-2.5 md:px-6">
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex min-w-0 items-center gap-2">
+            <Link
+              href="/knowledge/sql"
+              className="shrink-0 text-muted-foreground hover:text-foreground"
+              title="Volver a Consultas SQL"
+            >
+              <ArrowLeft className="h-4 w-4" />
             </Link>
-            <div className="mt-1 flex flex-wrap items-center gap-2">
-              <h1 className="text-lg font-semibold">{snippet.title}</h1>
-              <button
-                onClick={() => toggleSnippetFavorite(snippet.id, !snippet.is_favorite)}
-                className={
-                  snippet.is_favorite
-                    ? "rounded p-1 text-amber-500 hover:bg-muted"
-                    : "rounded p-1 text-muted-foreground hover:bg-muted"
-                }
-                aria-label="Favorito"
-              >
-                <Star className="h-4 w-4" fill={snippet.is_favorite ? "currentColor" : "none"} />
-              </button>
-            </div>
-            {snippet.description && (
-              <p className="mt-1 max-w-2xl text-sm text-muted-foreground">{snippet.description}</p>
+            <h1 className="truncate text-base font-semibold">{snippet.title}</h1>
+            <button
+              onClick={() => toggleSnippetFavorite(snippet.id, !snippet.is_favorite)}
+              className={
+                snippet.is_favorite
+                  ? "shrink-0 rounded p-0.5 text-amber-500 hover:bg-muted"
+                  : "shrink-0 rounded p-0.5 text-muted-foreground hover:bg-muted"
+              }
+              aria-label="Favorito"
+            >
+              <Star className="h-4 w-4" fill={snippet.is_favorite ? "currentColor" : "none"} />
+            </button>
+            <span className="hidden shrink-0 rounded bg-muted px-1.5 py-0.5 text-[10px] font-semibold text-muted-foreground sm:inline">
+              {snippet.category}
+            </span>
+            <span className="hidden shrink-0 rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground sm:inline">
+              {snippet.database_type}
+            </span>
+            {snippet.schema_name && (
+              <span className="hidden shrink-0 rounded bg-muted px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground md:inline">
+                {snippet.schema_name}
+              </span>
             )}
-            <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
-              <span className="rounded bg-muted px-1.5 py-0.5 font-semibold">{snippet.category}</span>
-              <span className="rounded bg-muted px-1.5 py-0.5">{snippet.database_type}</span>
-              {snippet.schema_name && (
-                <span className="rounded bg-muted px-1.5 py-0.5 font-mono">{snippet.schema_name}</span>
-              )}
-              {snippet.environment && (
-                <span className="rounded bg-muted px-1.5 py-0.5">{snippet.environment}</span>
-              )}
-            </div>
+            {snippet.environment && (
+              <span className="hidden shrink-0 rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground md:inline">
+                {snippet.environment}
+              </span>
+            )}
           </div>
-          <div className="flex items-center gap-2">
-            <ExportMenu actions={exportActions} />
+
+          <div className="flex shrink-0 items-center gap-1">
+            <TagPicker
+              assigned={snippet.tags}
+              canEdit={canEdit}
+              onToggle={(tagId, active) =>
+                toggleSnippetTag(snippet.id, tagId, active).catch((e) => toast(e.message, "error"))
+              }
+            />
+            <Button size="sm" variant="ghost" onClick={() => setSendOpen(true)} title="Enviar">
+              <Send className="h-4 w-4" />
+            </Button>
+            <ExportMenu
+              actions={exportActions}
+              trigger={
+                <button
+                  type="button"
+                  className="rounded-lg p-2 text-muted-foreground hover:bg-muted hover:text-foreground"
+                  title="Exportar"
+                >
+                  <Download className="h-4 w-4" />
+                </button>
+              }
+            />
             {canEdit && (
-              <Button size="sm" variant="outline" onClick={() => setEditOpen(true)}>
-                <Pencil className="h-3.5 w-3.5" /> Editar
+              <Button
+                size="sm"
+                variant="ghost"
+                title="Duplicar"
+                onClick={async () => {
+                  try {
+                    const newId = await duplicateSnippet(snippet.id);
+                    toast("Consulta duplicada");
+                    if (newId) router.push(`/knowledge/sql/${newId}`);
+                  } catch (error) {
+                    toast(error instanceof Error ? error.message : "Error", "error");
+                  }
+                }}
+              >
+                <CopyPlus className="h-4 w-4" />
+              </Button>
+            )}
+            {canEdit && (
+              <Button
+                size="sm"
+                variant="ghost"
+                title="Editar"
+                onClick={() => setEditOpen(true)}
+              >
+                <Pencil className="h-4 w-4" />
               </Button>
             )}
             {isAdmin && (
-              <Button size="sm" variant="danger" onClick={handleDelete}>
-                <Trash2 className="h-3.5 w-3.5" /> Eliminar
+              <Button size="sm" variant="ghost" title="Eliminar" onClick={handleDelete}>
+                <Trash2 className="h-4 w-4 text-danger" />
               </Button>
             )}
           </div>
         </div>
-
-        <div className="mt-3">
-          <TagPicker
-            assigned={snippet.tags}
-            canEdit={canEdit}
-            onToggle={(tagId, active) =>
-              toggleSnippetTag(snippet.id, tagId, active).catch((e) => toast(e.message, "error"))
-            }
-          />
-        </div>
+        {snippet.description && (
+          <p className="mt-1 truncate text-xs text-muted-foreground">{snippet.description}</p>
+        )}
       </header>
 
-      <div className="min-h-0 flex-1 overflow-y-auto space-y-5 p-4 md:p-6">
+      <div className="min-h-0 flex-1 overflow-y-auto space-y-3 p-3 md:p-4">
         {snippet.warnings && (
           <div className="flex items-start gap-2 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-700 dark:text-amber-300">
             <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
@@ -386,10 +432,19 @@ export function SnippetDetail({ snippetId }: { snippetId: string }) {
       </div>
 
       <SnippetDialog
-        key={editOpen ? snippet.id : "closed"}
+        key={editOpen ? snippet.id : "snippet-dialog-closed"}
         open={editOpen}
         onClose={() => setEditOpen(false)}
         snippet={snippet}
+      />
+
+      <SendItemDialog
+        key={sendOpen ? "send-open" : "send-dialog-closed"}
+        open={sendOpen}
+        onClose={() => setSendOpen(false)}
+        itemType="SNIPPET"
+        itemId={snippet.id}
+        itemLabel={snippet.title}
       />
     </div>
   );

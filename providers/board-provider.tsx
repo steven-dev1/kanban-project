@@ -52,6 +52,10 @@ interface BoardContextValue {
   addCard: (listId: string, title: string, description?: string) => Promise<Card | null>;
   updateCard: (id: string, patch: Partial<Card>) => Promise<void>;
   toggleCardComplete: (cardId: string, completed: boolean) => Promise<void>;
+  addChecklistItem: (cardId: string, text: string) => Promise<void>;
+  toggleChecklistItem: (id: string, done: boolean) => Promise<void>;
+  updateChecklistItem: (id: string, text: string) => Promise<void>;
+  deleteChecklistItem: (id: string) => Promise<void>;
   duplicateCard: (cardId: string) => Promise<string | null>;
   archiveCard: (id: string, archived: boolean) => Promise<void>;
   deleteCard: (id: string) => Promise<void>;
@@ -115,7 +119,7 @@ export function BoardProvider({
         supabase
           .from("cards")
           .select(
-            "*, card_labels(label_id, labels(*)), card_assignees(user_id, profile:profiles(*)), attachments(*)",
+            "*, card_labels(label_id, labels(*)), card_assignees(user_id, profile:profiles(*)), attachments(*), card_checklist_items(*)",
           )
           .eq("board_id", boardId)
           .order("position"),
@@ -219,6 +223,11 @@ export function BoardProvider({
       )
       .on(
         "postgres_changes",
+        { event: "*", schema: "public", table: "card_checklist_items" },
+        scheduleRefetch,
+      )
+      .on(
+        "postgres_changes",
         { event: "*", schema: "public", table: "attachments", filter: `board_id=eq.${boardId}` },
         scheduleRefetch,
       )
@@ -309,7 +318,7 @@ export function BoardProvider({
           created_by: user?.id ?? null,
         })
         .select(
-          "*, card_labels(label_id, labels(*)), card_assignees(user_id, profile:profiles(*)), attachments(*)",
+          "*, card_labels(label_id, labels(*)), card_assignees(user_id, profile:profiles(*)), attachments(*), card_checklist_items(*)",
         )
         .single();
       if (error) throw new Error(error.message);
@@ -339,17 +348,120 @@ export function BoardProvider({
 
   const toggleCardComplete = useCallback(
     async (cardId: string, completed: boolean) => {
+      const previous = lists.flatMap((l) => l.cards).find((c) => c.id === cardId);
+      if (!previous) return;
       const patch = {
         is_completed: completed,
         completed_at: completed ? new Date().toISOString() : null,
       };
+
+      const sourceList = lists.find((l) => l.id === previous.list_id);
+      const targetId = completed ? (sourceList?.completed_list_id ?? null) : null;
+      const shouldMove = !!targetId && targetId !== previous.list_id;
+      const targetList = shouldMove ? lists.find((l) => l.id === targetId) : null;
+      const position = shouldMove
+        ? (targetList?.cards ?? []).reduce((acc, c) => Math.max(acc, c.position), 0) + 1000
+        : previous.position;
+      const moved = {
+        ...previous,
+        ...patch,
+        list_id: shouldMove ? (targetId as string) : previous.list_id,
+        position,
+      };
+
+      // Optimista: se ve al instante.
+      setLists((prev) =>
+        prev.map((l) => {
+          const without = l.cards.filter((c) => c.id !== cardId);
+          if (l.id === moved.list_id) {
+            return { ...l, cards: [...without, moved].sort(byPosition) };
+          }
+          return { ...l, cards: without };
+        }),
+      );
+
+      const update = shouldMove ? { ...patch, list_id: targetId, position } : patch;
+      const { error } = await supabase.from("cards").update(update).eq("id", cardId);
+      if (error) {
+        // No se guardó: resincronizamos con la base.
+        await refetch();
+        throw new Error(error.message);
+      }
+    },
+    [supabase, lists, refetch],
+  );
+
+  const addChecklistItem = useCallback(
+    async (cardId: string, text: string) => {
+      const card = lists.flatMap((l) => l.cards).find((c) => c.id === cardId);
+      const items = card?.card_checklist_items ?? [];
+      const position = items.reduce((acc, i) => Math.max(acc, i.position), 0) + 1000;
+      const { error } = await supabase
+        .from("card_checklist_items")
+        .insert({ card_id: cardId, text, position });
+      if (error) throw new Error(error.message);
+      await refetch();
+    },
+    [supabase, lists, refetch],
+  );
+
+  const toggleChecklistItem = useCallback(
+    async (id: string, done: boolean) => {
       setLists((prev) =>
         prev.map((l) => ({
           ...l,
-          cards: l.cards.map((c) => (c.id === cardId ? { ...c, ...patch } : c)),
+          cards: l.cards.map((c) => ({
+            ...c,
+            card_checklist_items: c.card_checklist_items.map((i) =>
+              i.id === id ? { ...i, is_done: done } : i,
+            ),
+          })),
         })),
       );
-      await supabase.from("cards").update(patch).eq("id", cardId);
+      const { error } = await supabase
+        .from("card_checklist_items")
+        .update({ is_done: done })
+        .eq("id", id);
+      if (error) throw new Error(error.message);
+    },
+    [supabase],
+  );
+
+  const updateChecklistItem = useCallback(
+    async (id: string, text: string) => {
+      setLists((prev) =>
+        prev.map((l) => ({
+          ...l,
+          cards: l.cards.map((c) => ({
+            ...c,
+            card_checklist_items: c.card_checklist_items.map((i) =>
+              i.id === id ? { ...i, text } : i,
+            ),
+          })),
+        })),
+      );
+      const { error } = await supabase
+        .from("card_checklist_items")
+        .update({ text })
+        .eq("id", id);
+      if (error) throw new Error(error.message);
+    },
+    [supabase],
+  );
+
+  const deleteChecklistItem = useCallback(
+    async (id: string) => {
+      setLists((prev) =>
+        prev.map((l) => ({
+          ...l,
+          cards: l.cards.map((c) => ({
+            ...c,
+            card_checklist_items: c.card_checklist_items.filter((i) => i.id !== id),
+          })),
+        })),
+      );
+      const { error } = await supabase.from("card_checklist_items").delete().eq("id", id);
+      if (error) throw new Error(error.message);
     },
     [supabase],
   );
@@ -415,6 +527,17 @@ export function BoardProvider({
             });
           }
         }
+      }
+
+      if (source.card_checklist_items?.length) {
+        await supabase.from("card_checklist_items").insert(
+          source.card_checklist_items.map((item) => ({
+            card_id: newId,
+            text: item.text,
+            is_done: item.is_done,
+            position: item.position,
+          })),
+        );
       }
 
       await refetch();
@@ -583,24 +706,43 @@ export function BoardProvider({
 
   const inviteMember = useCallback(
     async (email: string, role: Role) => {
+      const normalized = email.trim().toLowerCase();
+      if (!normalized) return { error: "Escribe un correo", warning: null };
+      if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(normalized)) {
+        return { error: "El correo no es válido", warning: null };
+      }
+      if (members.some((m) => m.profile?.email?.toLowerCase() === normalized)) {
+        return { error: "Ese usuario ya es miembro de este tablero", warning: null };
+      }
+      if (invitations.some((i) => i.email.toLowerCase() === normalized)) {
+        return { error: "Ya hay una invitación pendiente para ese correo", warning: null };
+      }
+
       try {
-        const res = await fetch("/api/invitations", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ board_id: boardId, email, role }),
+        const { data: existingProfile } = await supabase
+          .from("profiles")
+          .select("id")
+          .ilike("email", normalized)
+          .maybeSingle();
+
+        const { error } = await supabase.from("board_invitations").insert({
+          board_id: boardId,
+          email: normalized,
+          role,
+          invited_by: user?.id ?? null,
         });
-        const json = (await res.json().catch(() => ({}))) as {
-          error?: string;
-          warning?: string | null;
-        };
-        if (!res.ok) {
+        if (error) return { error: error.message, warning: null };
+
+        await refetch();
+
+        if (!existingProfile) {
           return {
-            error: json.error ?? "No se pudo enviar la invitación",
-            warning: null,
+            error: null,
+            warning:
+              "El correo aún no está registrado. La invitación queda pendiente y se le notificará al crear su cuenta.",
           };
         }
-        await refetch();
-        return { error: null, warning: json.warning ?? null };
+        return { error: null, warning: null };
       } catch (err) {
         return {
           error: err instanceof Error ? err.message : "Error de red",
@@ -608,7 +750,7 @@ export function BoardProvider({
         };
       }
     },
-    [boardId, refetch],
+    [supabase, boardId, user, members, invitations, refetch],
   );
 
   const updateMemberRole = useCallback(
@@ -669,6 +811,10 @@ export function BoardProvider({
       addCard,
       updateCard,
       toggleCardComplete,
+      addChecklistItem,
+      toggleChecklistItem,
+      updateChecklistItem,
+      deleteChecklistItem,
       duplicateCard,
       archiveCard,
       deleteCard,
@@ -711,6 +857,10 @@ export function BoardProvider({
       addCard,
       updateCard,
       toggleCardComplete,
+      addChecklistItem,
+      toggleChecklistItem,
+      updateChecklistItem,
+      deleteChecklistItem,
       duplicateCard,
       archiveCard,
       deleteCard,

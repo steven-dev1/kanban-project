@@ -1,6 +1,7 @@
 "use client";
 
 import { ObjectDialog } from "@/components/knowledge/object-dialog";
+import { ImportDdlDialog } from "@/components/knowledge/import-ddl-dialog";
 import {
   EmptyState,
   EnvironmentBadge,
@@ -14,12 +15,13 @@ import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { useToast } from "@/components/ui/toast";
 import { ENVIRONMENTS } from "@/lib/knowledge/constants";
-import { downloadBlob } from "@/lib/knowledge/format";
+import { downloadBlob, downloadTextFile } from "@/lib/knowledge/format";
 import { buildObjectsZip } from "@/lib/knowledge/export";
+import { documentationCsv, documentationMarkdown } from "@/lib/knowledge/export-docs";
 import type { OracleObjectType } from "@/lib/types";
 import { cn, formatDate } from "@/lib/utils";
 import { useKnowledge } from "@/providers/knowledge-provider";
-import { Download, Filter, PackageOpen, Plus, Search, Star } from "lucide-react";
+import { Download, FileInput, Filter, PackageOpen, Plus, Search, Star } from "lucide-react";
 import Link from "next/link";
 import { useMemo, useState } from "react";
 
@@ -51,6 +53,7 @@ export function ObjectsList({
   const [sort, setSort] = useState<SortKey>("name");
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [createOpen, setCreateOpen] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
 
   const base = useMemo(
     () =>
@@ -122,11 +125,60 @@ export function ObjectsList({
             <h1 className="text-lg font-semibold">{title}</h1>
             <p className="text-sm text-muted-foreground">{description}</p>
           </div>
-          {canEdit && (
-            <Button size="sm" onClick={() => setCreateOpen(true)}>
-              <Plus className="h-3.5 w-3.5" /> Nuevo objeto
-            </Button>
-          )}
+          <div className="flex items-center gap-2">
+            <Dropdown
+              trigger={
+                <button
+                  type="button"
+                  className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-border bg-card px-3 text-sm font-medium hover:bg-muted"
+                >
+                  Documentación
+                </button>
+              }
+            >
+              {() => (
+                <div>
+                  <DropdownItem
+                    onClick={() =>
+                      downloadTextFile(
+                        "diccionario_datos.md",
+                        documentationMarkdown(filtered),
+                        "text/markdown",
+                      )
+                    }
+                  >
+                    Exportar Markdown (.md)
+                  </DropdownItem>
+                  <DropdownItem
+                    onClick={() =>
+                      downloadTextFile(
+                        "diccionario_datos.csv",
+                        documentationCsv(filtered),
+                        "text/csv",
+                      )
+                    }
+                  >
+                    Exportar CSV (.csv)
+                  </DropdownItem>
+                </div>
+              )}
+            </Dropdown>
+            {canEdit && (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => setImportOpen(true)}
+                title="Pega el CREATE TABLE/VIEW y se crean las columnas"
+              >
+                <FileInput className="h-3.5 w-3.5" /> Importar DDL
+              </Button>
+            )}
+            {canEdit && (
+              <Button size="sm" onClick={() => setCreateOpen(true)}>
+                <Plus className="h-3.5 w-3.5" /> Nuevo objeto
+              </Button>
+            )}
+          </div>
         </div>
 
         <div className="mt-4 flex flex-wrap items-center gap-2">
@@ -369,10 +421,19 @@ export function ObjectsList({
       </div>
 
       <ObjectDialog
-        key={createOpen ? "open" : "closed"}
+        key={createOpen ? "create-open" : "create-closed"}
         open={createOpen}
         onClose={() => setCreateOpen(false)}
         defaultType={defaultType ?? objectTypes[0]}
+        lockType={objectTypes.length === 1}
+      />
+
+      <ImportDdlDialog
+        key={importOpen ? "import-open" : "import-closed"}
+        open={importOpen}
+        onClose={() => setImportOpen(false)}
+        defaultType={defaultType ?? objectTypes[0]}
+        onImported={(object) => setSelected(new Set([object.id]))}
       />
     </div>
   );

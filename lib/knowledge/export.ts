@@ -24,7 +24,6 @@ function documentationFor(object: OracleObjectWithRelations) {
   const lines: string[] = [
     `${object.schema_name}.${object.object_name} (${object.object_type})`,
     object.description ? `Descripción: ${object.description}` : "",
-    object.functional_description ? `Funcional: ${object.functional_description}` : "",
     object.module ? `Módulo: ${object.module}` : "",
     object.owner ? `Responsable: ${object.owner}` : "",
     "",

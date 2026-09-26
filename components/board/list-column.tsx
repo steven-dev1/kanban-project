@@ -17,6 +17,7 @@ import {
 import { CSS } from "@dnd-kit/utilities";
 import {
   Archive,
+  CheckCircle2,
   GripVertical,
   MoreHorizontal,
   Palette,
@@ -33,7 +34,7 @@ interface Props {
 }
 
 export function ListColumn({ list, canEdit, onCardClick }: Props) {
-  const { updateList, archiveList, deleteList, addCard } = useBoard();
+  const { updateList, archiveList, deleteList, addCard, lists } = useBoard();
   const confirm = useConfirm();
   const { toast } = useToast();
   const [editingTitle, setEditingTitle] = useState(false);
@@ -184,6 +185,51 @@ export function ListColumn({ list, canEdit, onCardClick }: Props) {
                         style={{ backgroundColor: c.value }}
                       />
                     ))}
+                  </div>
+                </div>
+                <div className="px-2 py-1.5">
+                  <p className="mb-1.5 flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+                    <CheckCircle2 className="h-3.5 w-3.5" /> Al completar, mover a
+                  </p>
+                  <div className="space-y-0.5">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        updateList(list.id, { completed_list_id: null });
+                        close();
+                      }}
+                      className={cn(
+                        "flex w-full items-center rounded-md px-2 py-1 text-left text-xs hover:bg-muted",
+                        !list.completed_list_id && "bg-primary/10 text-primary",
+                      )}
+                    >
+                      No mover
+                    </button>
+                    {lists
+                      .filter((target) => target.id !== list.id)
+                      .map((target) => (
+                        <button
+                          key={target.id}
+                          type="button"
+                          onClick={() => {
+                            updateList(list.id, { completed_list_id: target.id });
+                            close();
+                          }}
+                          className={cn(
+                            "flex w-full items-center gap-1.5 rounded-md px-2 py-1 text-left text-xs hover:bg-muted",
+                            list.completed_list_id === target.id &&
+                              "bg-primary/10 text-primary",
+                          )}
+                        >
+                          {target.color && (
+                            <span
+                              className="h-2 w-2 shrink-0 rounded-full"
+                              style={{ backgroundColor: target.color }}
+                            />
+                          )}
+                          <span className="truncate">{target.title}</span>
+                        </button>
+                      ))}
                   </div>
                 </div>
                 <DropdownItem

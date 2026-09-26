@@ -2,6 +2,9 @@
 
 import { Button } from "@/components/ui/button";
 import { Field } from "@/components/knowledge/ui";
+import { SyntaxReport, useValidation } from "@/components/knowledge/syntax-report";
+import { CodeEditor } from "@/components/knowledge/code-editor";
+import { formatSql } from "@/lib/knowledge/format-sql";
 import { Input, Textarea } from "@/components/ui/input";
 import { Modal } from "@/components/ui/modal";
 import { Select } from "@/components/ui/select";
@@ -51,11 +54,15 @@ export function SnippetDialog({
   const [warnings, setWarnings] = useState(snippet?.warnings ?? "");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const validation = useValidation(sqlCode);
 
   const submit = async () => {
     setError(null);
     if (!title.trim()) return setError("El título es obligatorio");
     if (!sqlCode.trim()) return setError("El SQL no puede estar vacío");
+    if (validation.errors.length > 0) {
+      return setError("Hay errores de sintaxis. Corrígelos antes de guardar.");
+    }
 
     setSaving(true);
     try {
@@ -145,16 +152,26 @@ export function SnippetDialog({
           />
         </Field>
 
-        <Field label="SQL *" hint="El sistema solo almacena y muestra la consulta; nunca la ejecuta.">
-          <Textarea
-            rows={10}
+        <Field label="SQL *" hint="El sistema solo almacena y muestra la consulta; nunca la ejecuta. Usa Tab para indentar.">
+          <CodeEditor
             value={sqlCode}
-            onChange={(e) => setSqlCode(e.target.value)}
-            spellCheck={false}
-            className="font-mono text-[12.5px]"
+            onChange={setSqlCode}
+            minLines={10}
+            maxHeight={380}
             placeholder="SELECT * FROM SP6DF.VG_TIQUETES WHERE ..."
           />
         </Field>
+
+        <SyntaxReport result={validation} />
+        <div className="flex justify-end">
+          <button
+            type="button"
+            onClick={() => setSqlCode(formatSql(sqlCode))}
+            className="text-xs text-primary hover:underline"
+          >
+            Formatear SQL
+          </button>
+        </div>
 
         <div className="grid gap-4 sm:grid-cols-2">
           <Field label="Advertencias">
@@ -183,7 +200,7 @@ export function SnippetDialog({
           <Button variant="outline" onClick={onClose} disabled={saving}>
             Cancelar
           </Button>
-          <Button onClick={submit} disabled={saving}>
+          <Button onClick={submit} disabled={saving || validation.errors.length > 0}>
             {saving ? "Guardando…" : editing ? "Guardar cambios" : "Crear consulta"}
           </Button>
         </div>

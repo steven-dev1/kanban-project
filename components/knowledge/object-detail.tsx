@@ -7,6 +7,7 @@ import { EnvironmentsPanel } from "@/components/knowledge/environments-panel";
 import { ExportMenu, type ExportAction } from "@/components/knowledge/export-menu";
 import { ObjectDialog } from "@/components/knowledge/object-dialog";
 import { RelationsPanel } from "@/components/knowledge/relations-panel";
+import { SendItemDialog } from "@/components/messages/send-item-dialog";
 import { TagPicker } from "@/components/knowledge/tag-picker";
 import { EnvironmentBadge, ObjectTypeBadge, Skeleton } from "@/components/knowledge/ui";
 import { Button } from "@/components/ui/button";
@@ -19,13 +20,17 @@ import type { OracleCodeVersion, SourceType } from "@/lib/types";
 import { cn, formatDate } from "@/lib/utils";
 import { useKnowledge } from "@/providers/knowledge-provider";
 import {
+  ArrowLeft,
   Code2,
   Columns3,
+  CopyPlus,
+  Download,
   GitBranch,
   Info,
   Layers,
   ListTree,
   Pencil,
+  Send,
   Star,
   Trash2,
 } from "lucide-react";
@@ -45,6 +50,7 @@ export function ObjectDetail({ objectId }: { objectId: string }) {
     canEdit,
     isAdmin,
     deleteObject,
+    duplicateObject,
     toggleObjectFavorite,
     toggleObjectTag,
   } = useKnowledge();
@@ -53,8 +59,9 @@ export function ObjectDetail({ objectId }: { objectId: string }) {
   const router = useRouter();
 
   const object = objects.find((o) => o.id === objectId) ?? null;
-  const [tab, setTab] = useState<TabKey>("info");
+  const [chosenTab, setChosenTab] = useState<TabKey | null>(null);
   const [editOpen, setEditOpen] = useState(false);
+  const [sendOpen, setSendOpen] = useState(false);
 
   useEffect(() => {
     if (object) {
@@ -151,7 +158,6 @@ export function ObjectDetail({ objectId }: { objectId: string }) {
     const lines = [
       `${object.schema_name}.${object.object_name} (${OBJECT_TYPE_LABELS[object.object_type]})`,
       object.description ? `Descripción: ${object.description}` : "",
-      object.functional_description ? `Funcional: ${object.functional_description}` : "",
       object.module ? `Módulo: ${object.module}` : "",
       object.owner ? `Responsable: ${object.owner}` : "",
       "",
@@ -209,7 +215,6 @@ export function ObjectDetail({ objectId }: { objectId: string }) {
   const bodyVersions = object.code_versions.filter((v) => v.source_type === "BODY");
 
   const tabs: { key: TabKey; label: string; icon: typeof Info }[] = [
-    { key: "info", label: "Información", icon: Info },
     ...(isTableLike ? [{ key: "columns" as TabKey, label: "Columnas", icon: Columns3 }] : []),
     ...(hasCode && !isPackage ? [{ key: "code" as TabKey, label: "Código", icon: Code2 }] : []),
     ...(isPackage
@@ -221,7 +226,17 @@ export function ObjectDetail({ objectId }: { objectId: string }) {
     ...(hasArgs ? [{ key: "args" as TabKey, label: "Argumentos", icon: ListTree }] : []),
     { key: "environments", label: "Ambientes", icon: Layers },
     { key: "impact", label: "Impacto / Relaciones", icon: GitBranch },
+    { key: "info", label: "Información", icon: Info },
   ];
+
+  const defaultTab: TabKey = isTableLike
+    ? "columns"
+    : hasCode && !isPackage
+      ? "code"
+      : isPackage
+        ? "spec"
+        : "info";
+  const tab = chosenTab ?? defaultTab;
 
   const handleDelete = async () => {
     const ok = await confirm({
@@ -242,71 +257,101 @@ export function ObjectDetail({ objectId }: { objectId: string }) {
 
   return (
     <div className="flex h-full flex-col">
-      <header className="border-b border-border bg-card px-4 py-4 md:px-6">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div className="min-w-0">
+      <header className="border-b border-border bg-card px-4 py-1.5 md:px-6">
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex min-w-0 items-center gap-2">
             <Link
               href="/knowledge/tables"
-              className="text-xs text-muted-foreground hover:text-foreground"
+              className="shrink-0 text-muted-foreground hover:text-foreground"
+              title="Volver al diccionario"
             >
-              ← Diccionario de datos
+              <ArrowLeft className="h-4 w-4" />
             </Link>
-            <div className="mt-1 flex flex-wrap items-center gap-2">
-              <ObjectTypeBadge type={object.object_type} />
-              <h1 className="font-mono text-lg font-semibold break-all">
-                {object.schema_name}.{object.object_name}
-              </h1>
-              <button
-                onClick={() => toggleObjectFavorite(object.id, !object.is_favorite)}
-                className={cn(
-                  "rounded-md p-1 transition-colors hover:bg-muted",
-                  object.is_favorite ? "text-amber-500" : "text-muted-foreground",
-                )}
-                aria-label="Favorito"
-                title={object.is_favorite ? "Quitar de favoritos" : "Marcar favorito"}
-              >
-                <Star className="h-4 w-4" fill={object.is_favorite ? "currentColor" : "none"} />
-              </button>
-            </div>
+            <ObjectTypeBadge type={object.object_type} />
+            <h1 className="truncate font-mono text-base font-semibold">
+              {object.schema_name}.{object.object_name}
+            </h1>
+            <button
+              onClick={() => toggleObjectFavorite(object.id, !object.is_favorite)}
+              className={cn(
+                "shrink-0 rounded-md p-0.5 transition-colors hover:bg-muted",
+                object.is_favorite ? "text-amber-500" : "text-muted-foreground",
+              )}
+              aria-label="Favorito"
+              title={object.is_favorite ? "Quitar de favoritos" : "Marcar favorito"}
+            >
+              <Star className="h-4 w-4" fill={object.is_favorite ? "currentColor" : "none"} />
+            </button>
             {object.description && (
-              <p className="mt-1 max-w-2xl text-sm text-muted-foreground">{object.description}</p>
+              <span className="hidden truncate text-xs text-muted-foreground lg:inline">
+                {object.description}
+              </span>
             )}
           </div>
 
-          <div className="flex items-center gap-2">
-            <ExportMenu actions={exportActions} />
+          <div className="flex shrink-0 items-center gap-1">
+            <TagPicker
+              assigned={object.tags}
+              canEdit={canEdit}
+              onToggle={(tagId, active) =>
+                toggleObjectTag(object.id, tagId, active).catch((e) => toast(e.message, "error"))
+              }
+            />
+            <Button size="sm" variant="ghost" title="Enviar" onClick={() => setSendOpen(true)}>
+              <Send className="h-4 w-4" />
+            </Button>
+            <ExportMenu
+              actions={exportActions}
+              trigger={
+                <button
+                  type="button"
+                  className="rounded-lg p-2 text-muted-foreground hover:bg-muted hover:text-foreground"
+                  title="Exportar"
+                >
+                  <Download className="h-4 w-4" />
+                </button>
+              }
+            />
             {canEdit && (
-              <Button size="sm" variant="outline" onClick={() => setEditOpen(true)}>
-                <Pencil className="h-3.5 w-3.5" /> Editar
+              <Button
+                size="sm"
+                variant="ghost"
+                title="Duplicar"
+                onClick={async () => {
+                  try {
+                    const newId = await duplicateObject(object.id);
+                    toast("Objeto duplicado");
+                    if (newId) router.push(`/knowledge/objects/${newId}`);
+                  } catch (error) {
+                    toast(error instanceof Error ? error.message : "Error", "error");
+                  }
+                }}
+              >
+                <CopyPlus className="h-4 w-4" />
+              </Button>
+            )}
+            {canEdit && (
+              <Button size="sm" variant="ghost" title="Editar" onClick={() => setEditOpen(true)}>
+                <Pencil className="h-4 w-4" />
               </Button>
             )}
             {isAdmin && (
-              <Button size="sm" variant="danger" onClick={handleDelete}>
-                <Trash2 className="h-3.5 w-3.5" /> Eliminar
+              <Button size="sm" variant="ghost" title="Eliminar" onClick={handleDelete}>
+                <Trash2 className="h-4 w-4 text-danger" />
               </Button>
             )}
           </div>
         </div>
 
-        <div className="mt-3">
-          <TagPicker
-            assigned={object.tags}
-            canEdit={canEdit}
-            onToggle={(tagId, active) =>
-              toggleObjectTag(object.id, tagId, active).catch((e) => toast(e.message, "error"))
-            }
-          />
-        </div>
-
-        <nav className="mt-4 flex gap-1 overflow-x-auto">
+        <nav className="flex gap-1 overflow-x-auto">
           {tabs.map((item) => {
             const Icon = item.icon;
             return (
               <button
                 key={item.key}
-                onClick={() => setTab(item.key)}
+                onClick={() => setChosenTab(item.key)}
                 className={cn(
-                  "inline-flex shrink-0 items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium transition-colors",
+                  "inline-flex shrink-0 items-center gap-1.5 rounded-lg px-2.5 py-1 text-sm font-medium transition-colors",
                   tab === item.key
                     ? "bg-primary/10 text-primary"
                     : "text-muted-foreground hover:bg-muted hover:text-foreground",
@@ -320,7 +365,7 @@ export function ObjectDetail({ objectId }: { objectId: string }) {
         </nav>
       </header>
 
-      <div className="min-h-0 flex-1 overflow-y-auto p-4 md:p-6">
+      <div className="min-h-0 flex-1 overflow-y-auto p-3 md:p-4">
         {tab === "info" && <InfoTab object={object} profiles={profiles} />}
         {tab === "columns" && (
           <ColumnsPanel objectId={object.id} columns={object.columns} canEdit={canEdit} />
@@ -369,10 +414,19 @@ export function ObjectDetail({ objectId }: { objectId: string }) {
       </div>
 
       <ObjectDialog
-        key={editOpen ? object.id : "closed"}
+        key={editOpen ? object.id : "object-dialog-closed"}
         open={editOpen}
         onClose={() => setEditOpen(false)}
         object={object}
+      />
+
+      <SendItemDialog
+        key={sendOpen ? "send-open" : "send-dialog-closed"}
+        open={sendOpen}
+        onClose={() => setSendOpen(false)}
+        itemType="OBJECT"
+        itemId={object.id}
+        itemLabel={`${object.schema_name}.${object.object_name}`}
       />
     </div>
   );
@@ -405,15 +459,8 @@ function InfoTab({
       </section>
 
       <section className="space-y-3 rounded-xl border border-border bg-card p-4">
-        <h3 className="text-xs font-semibold uppercase text-muted-foreground">Descripciones</h3>
-        <div>
-          <p className="text-xs text-muted-foreground">Descripción técnica</p>
-          <p className="text-sm">{object.description || "—"}</p>
-        </div>
-        <div>
-          <p className="text-xs text-muted-foreground">Descripción funcional</p>
-          <p className="text-sm">{object.functional_description || "—"}</p>
-        </div>
+        <h3 className="text-xs font-semibold uppercase text-muted-foreground">Descripción</h3>
+        <p className="text-sm">{object.description || object.functional_description || "—"}</p>
         <div>
           <p className="text-xs font-medium text-muted-foreground">Notas</p>
           <p className="text-sm">{object.notes || "—"}</p>

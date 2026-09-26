@@ -1,6 +1,7 @@
 "use client";
 
 import { Field, ObjectTypeBadge } from "@/components/knowledge/ui";
+import { RelationsGraph } from "@/components/knowledge/relations-graph";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Modal } from "@/components/ui/modal";
@@ -8,6 +9,7 @@ import { Select } from "@/components/ui/select";
 import { useToast } from "@/components/ui/toast";
 import { RELATION_TYPES, RELATION_TYPE_LABELS } from "@/lib/knowledge/constants";
 import type { OracleObjectWithRelations, RelationType } from "@/lib/types";
+import { cn } from "@/lib/utils";
 import { useKnowledge } from "@/providers/knowledge-provider";
 import { ArrowRight, Link2, Plus, Trash2 } from "lucide-react";
 import Link from "next/link";
@@ -23,6 +25,7 @@ export function RelationsPanel({
   const { objects, addRelation, deleteRelation, isAdmin } = useKnowledge();
   const { toast } = useToast();
   const [open, setOpen] = useState(false);
+  const [view, setView] = useState<"lists" | "graph">("lists");
 
   const usage = useMemo(() => {
     // Who uses this object (incoming relations).
@@ -33,6 +36,32 @@ export function RelationsPanel({
 
   return (
     <div className="space-y-5">
+      <div className="flex justify-end gap-1 text-xs">
+        <button
+          type="button"
+          onClick={() => setView("lists")}
+          className={cn(
+            "rounded-md px-2.5 py-1",
+            view === "lists" ? "bg-primary/10 text-primary" : "text-muted-foreground hover:bg-muted",
+          )}
+        >
+          Listas
+        </button>
+        <button
+          type="button"
+          onClick={() => setView("graph")}
+          className={cn(
+            "rounded-md px-2.5 py-1",
+            view === "graph" ? "bg-primary/10 text-primary" : "text-muted-foreground hover:bg-muted",
+          )}
+        >
+          Grafo
+        </button>
+      </div>
+
+      {view === "graph" ? (
+        <RelationsGraph object={object} />
+      ) : (
       <div className="grid gap-4 lg:grid-cols-2">
         <section className="space-y-2">
           <div className="flex items-center justify-between">
@@ -89,6 +118,7 @@ export function RelationsPanel({
           )}
         </section>
       </div>
+      )}
 
       <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
         <Link2 className="h-3.5 w-3.5" />

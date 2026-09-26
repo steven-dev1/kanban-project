@@ -4,8 +4,6 @@ import { useEffect } from "react";
 
 export function RuntimeDiagnostics() {
   useEffect(() => {
-    document.documentElement.setAttribute("data-boot", "on");
-
     const box = document.getElementById("runtime-errors");
     const push = (label: string, msg: string) => {
       if (!box) return;

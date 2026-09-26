@@ -17,6 +17,7 @@ import type {
   OracleObjectEnvironment,
   OracleObjectWithRelations,
   Profile,
+  PullRequest,
   RelationType,
   SourceType,
   SqlSnippet,
@@ -112,17 +113,31 @@ export interface NewParameterInput {
   required?: boolean;
 }
 
+export interface NewPullRequestInput {
+  environment: Environment;
+  pr_number?: string | null;
+  title?: string | null;
+  url?: string | null;
+  status?: PullRequest["status"];
+  notes?: string | null;
+}
+
 interface KnowledgeContextValue {
   objects: OracleObjectWithRelations[];
   snippets: SqlSnippetWithRelations[];
   tags: KnowledgeTag[];
   profiles: Profile[];
+  pullRequests: PullRequest[];
   loading: boolean;
   loadError: string | null;
   canEdit: boolean;
   isAdmin: boolean;
   refetch: () => Promise<void>;
+  createPullRequest: (input: NewPullRequestInput) => Promise<void>;
+  updatePullRequest: (id: string, patch: Partial<PullRequest>) => Promise<void>;
+  deletePullRequest: (id: string) => Promise<void>;
   createObject: (input: NewObjectInput) => Promise<OracleObject | null>;
+  duplicateObject: (id: string, overrides?: { schema_name?: string; object_name?: string }) => Promise<string | null>;
   updateObject: (id: string, patch: Partial<OracleObject>) => Promise<void>;
   deleteObject: (id: string) => Promise<void>;
   toggleObjectFavorite: (id: string, favorite: boolean) => Promise<void>;
@@ -138,6 +153,12 @@ interface KnowledgeContextValue {
   updateColumnValue: (id: string, patch: Partial<OracleColumnValue>) => Promise<void>;
   deleteColumnValue: (id: string) => Promise<void>;
   addCodeVersion: (objectId: string, input: NewCodeVersionInput) => Promise<void>;
+  updateCodeVersion: (
+    id: string,
+    patch: Partial<
+      Pick<OracleCodeVersion, "source_code" | "change_description" | "environment" | "version_number">
+    >,
+  ) => Promise<void>;
   deleteCodeVersion: (id: string) => Promise<void>;
   addArgument: (objectId: string, input: NewArgumentInput) => Promise<void>;
   updateArgument: (id: string, patch: Partial<OracleArgument>) => Promise<void>;
@@ -149,6 +170,7 @@ interface KnowledgeContextValue {
   toggleObjectTag: (objectId: string, tagId: string, active: boolean) => Promise<void>;
   toggleSnippetTag: (snippetId: string, tagId: string, active: boolean) => Promise<void>;
   createSnippet: (input: NewSnippetInput) => Promise<SqlSnippet | null>;
+  duplicateSnippet: (id: string) => Promise<string | null>;
   updateSnippet: (id: string, patch: Partial<SqlSnippet>) => Promise<void>;
   deleteSnippet: (id: string) => Promise<void>;
   toggleSnippetFavorite: (id: string, favorite: boolean) => Promise<void>;
@@ -176,6 +198,7 @@ interface RawData {
   snippetTags: SqlSnippetTag[];
   favorites: KnowledgeFavorite[];
   profiles: Profile[];
+  pullRequests: PullRequest[];
 }
 
 const EMPTY: RawData = {
@@ -194,6 +217,7 @@ const EMPTY: RawData = {
   snippetTags: [],
   favorites: [],
   profiles: [],
+  pullRequests: [],
 };
 
 const KNOWLEDGE_TABLES = [
@@ -211,6 +235,7 @@ const KNOWLEDGE_TABLES = [
   "knowledge_object_tags",
   "knowledge_snippet_tags",
   "knowledge_user_favorites",
+  "pull_requests",
 ] as const;
 
 export function KnowledgeProvider({ children }: { children: ReactNode }) {
@@ -238,6 +263,7 @@ export function KnowledgeProvider({ children }: { children: ReactNode }) {
       objectTagsRes,
       snippetTagsRes,
       profilesRes,
+      pullRequestsRes,
     ] = await Promise.all([
       supabase.from("oracle_objects").select("*").order("object_name"),
       supabase.from("oracle_object_environments").select("*"),
@@ -253,6 +279,7 @@ export function KnowledgeProvider({ children }: { children: ReactNode }) {
       supabase.from("knowledge_object_tags").select("*"),
       supabase.from("knowledge_snippet_tags").select("*"),
       supabase.from("profiles").select("*").order("full_name"),
+      supabase.from("pull_requests").select("*").order("created_at", { ascending: false }),
     ]);
 
     const favoritesRes = user
@@ -274,6 +301,7 @@ export function KnowledgeProvider({ children }: { children: ReactNode }) {
       objectTagsRes,
       snippetTagsRes,
       profilesRes,
+      pullRequestsRes,
     ].find((r) => r.error)?.error;
 
     setLoadError(firstError ? firstError.message : null);
@@ -295,6 +323,7 @@ export function KnowledgeProvider({ children }: { children: ReactNode }) {
       snippetTags: (snippetTagsRes.data as SqlSnippetTag[]) ?? [],
       favorites: (favoritesRes.data as KnowledgeFavorite[]) ?? [],
       profiles: (profilesRes.data as Profile[]) ?? [],
+      pullRequests: (pullRequestsRes.data as PullRequest[]) ?? [],
     });
     setLoading(false);
   }, [supabase, user]);
@@ -440,6 +469,117 @@ export function KnowledgeProvider({ children }: { children: ReactNode }) {
       return (created as OracleObject) ?? null;
     },
     [supabase, user, refetch],
+  );
+
+  const duplicateObject = useCallback(
+    async (
+      id: string,
+      overrides?: { schema_name?: string; object_name?: string },
+    ): Promise<string | null> => {
+      const source = data.objects.find((o) => o.id === id);
+      if (!source) throw new Error("Objeto no encontrado");
+
+      const { data: created, error } = await supabase
+        .from("oracle_objects")
+        .insert({
+          schema_name: (overrides?.schema_name ?? source.schema_name).toUpperCase(),
+          object_name: (overrides?.object_name ?? `${source.object_name}_COPIA`).toUpperCase(),
+          object_type: source.object_type,
+          description: source.description,
+          module: source.module,
+          owner: source.owner,
+          notes: source.notes,
+          source: source.source,
+          created_by: user?.id ?? null,
+          updated_by: user?.id ?? null,
+        })
+        .select()
+        .single();
+      if (error) throw new Error(error.message);
+      const newId = (created as OracleObject).id;
+
+      // Columnas + valores
+      const columns = data.columns.filter((c) => c.object_id === id);
+      if (columns.length) {
+        const { data: newColumns, error: colError } = await supabase
+          .from("oracle_columns")
+          .insert(
+            columns.map((c) => ({
+              object_id: newId,
+              column_name: c.column_name,
+              data_type: c.data_type,
+              data_length: c.data_length,
+              data_precision: c.data_precision,
+              data_scale: c.data_scale,
+              nullable: c.nullable,
+              column_order: c.column_order,
+              description: c.description,
+              business_meaning: c.business_meaning,
+              notes: c.notes,
+              source: c.source,
+            })),
+          )
+          .select();
+        if (colError) throw new Error(colError.message);
+        const idByName = new Map(
+          ((newColumns as OracleColumn[]) ?? []).map((c) => [c.column_name, c.id]),
+        );
+        const values = data.columnValues.filter((v) =>
+          columns.some((c) => c.id === v.column_id),
+        );
+        const valueRows = values
+          .map((v) => {
+            const oldColumn = columns.find((c) => c.id === v.column_id);
+            const newColumnId = oldColumn ? idByName.get(oldColumn.column_name) : undefined;
+            return newColumnId
+              ? {
+                  column_id: newColumnId,
+                  value: v.value,
+                  meaning: v.meaning,
+                  notes: v.notes,
+                  is_active: v.is_active,
+                  sort_order: v.sort_order,
+                }
+              : null;
+          })
+          .filter(Boolean);
+        if (valueRows.length) await supabase.from("oracle_column_values").insert(valueRows);
+      }
+
+      // Argumentos
+      const args = data.arguments.filter((a) => a.object_id === id);
+      if (args.length) {
+        await supabase.from("oracle_arguments").insert(
+          args.map((a) => ({
+            object_id: newId,
+            argument_name: a.argument_name,
+            position: a.position,
+            data_type: a.data_type,
+            in_out: a.in_out,
+            description: a.description,
+          })),
+        );
+      }
+
+      // Versiones de código
+      const versions = data.codeVersions.filter((v) => v.object_id === id);
+      if (versions.length) {
+        await supabase.from("oracle_code_versions").insert(
+          versions.map((v) => ({
+            object_id: newId,
+            version_number: v.version_number,
+            source_type: v.source_type,
+            source_code: v.source_code,
+            environment: v.environment,
+            change_description: v.change_description,
+          })),
+        );
+      }
+
+      await refetch();
+      return newId;
+    },
+    [supabase, data, user, refetch],
   );
 
   const updateObject = useCallback(
@@ -615,6 +755,34 @@ export function KnowledgeProvider({ children }: { children: ReactNode }) {
       if (!Number.isFinite(versionNumber)) {
         throw new Error("El número de versión debe ser numérico (ej. 1 o 1.5)");
       }
+
+      const existing = data.codeVersions.filter(
+        (v) => v.object_id === objectId && v.source_type === input.source_type,
+      );
+
+      const duplicateNumber = existing.find(
+        (v) =>
+          v.environment === input.environment && Number(v.version_number) === versionNumber,
+      );
+      if (duplicateNumber) {
+        throw new Error(
+          `La versión ${input.version_number} ya existe en ${input.environment}. Usa otro número.`,
+        );
+      }
+
+      const normalized = (value: string) =>
+        (value ?? "").replace(/\r\n?/g, "\n").replace(/[ \t]+$/gm, "").trim();
+      const identical = existing.find(
+        (v) =>
+          v.environment === input.environment &&
+          normalized(v.source_code) === normalized(input.source_code),
+      );
+      if (identical) {
+        throw new Error(
+          `Sin cambios: el código es idéntico a la versión ${identical.version_number} de ${input.environment}.`,
+        );
+      }
+
       const { error } = await supabase.from("oracle_code_versions").insert({
         object_id: objectId,
         version_number: versionNumber,
@@ -627,7 +795,27 @@ export function KnowledgeProvider({ children }: { children: ReactNode }) {
       if (error) throw new Error(error.message);
       await refetch();
     },
-    [supabase, user, refetch],
+    [supabase, data.codeVersions, user, refetch],
+  );
+
+  const updateCodeVersion = useCallback(
+    async (
+      id: string,
+      patch: Partial<
+        Pick<
+          OracleCodeVersion,
+          "source_code" | "change_description" | "environment" | "version_number"
+        >
+      >,
+    ) => {
+      setData((prev) => ({
+        ...prev,
+        codeVersions: prev.codeVersions.map((v) => (v.id === id ? { ...v, ...patch } : v)),
+      }));
+      const { error } = await supabase.from("oracle_code_versions").update(patch).eq("id", id);
+      if (error) throw new Error(error.message);
+    },
+    [supabase],
   );
 
   const deleteCodeVersion = useCallback(
@@ -782,6 +970,66 @@ export function KnowledgeProvider({ children }: { children: ReactNode }) {
     [supabase, user, refetch],
   );
 
+  const duplicateSnippet = useCallback(
+    async (id: string): Promise<string | null> => {
+      const source = data.snippets.find((s) => s.id === id);
+      if (!source) throw new Error("Consulta no encontrada");
+
+      const { data: created, error } = await supabase
+        .from("sql_snippets")
+        .insert({
+          title: `${source.title} (copia)`,
+          description: source.description,
+          sql_code: source.sql_code,
+          category: source.category,
+          database_type: source.database_type,
+          schema_name: source.schema_name,
+          environment: source.environment,
+          notes: source.notes,
+          warnings: source.warnings,
+          created_by: user?.id ?? null,
+          updated_by: user?.id ?? null,
+        })
+        .select()
+        .single();
+      if (error) throw new Error(error.message);
+      const newId = (created as SqlSnippet).id;
+
+      const params = data.parameters.filter((p) => p.snippet_id === id);
+      if (params.length) {
+        await supabase.from("sql_snippet_parameters").insert(
+          params.map((p) => ({
+            snippet_id: newId,
+            parameter_name: p.parameter_name,
+            data_type: p.data_type,
+            description: p.description,
+            example_value: p.example_value,
+            required: p.required,
+            position: p.position,
+          })),
+        );
+      }
+
+      const links = data.snippetObjects.filter((l) => l.snippet_id === id);
+      if (links.length) {
+        await supabase
+          .from("sql_snippet_objects")
+          .insert(links.map((l) => ({ snippet_id: newId, object_id: l.object_id })));
+      }
+
+      const tagLinks = data.snippetTags.filter((t) => t.snippet_id === id);
+      if (tagLinks.length) {
+        await supabase
+          .from("knowledge_snippet_tags")
+          .insert(tagLinks.map((t) => ({ snippet_id: newId, tag_id: t.tag_id })));
+      }
+
+      await refetch();
+      return newId;
+    },
+    [supabase, data, user, refetch],
+  );
+
   const updateSnippet = useCallback(
     async (id: string, patch: Partial<SqlSnippet>) => {
       setData((prev) => ({
@@ -866,18 +1114,57 @@ export function KnowledgeProvider({ children }: { children: ReactNode }) {
     [supabase, refetch],
   );
 
+  const createPullRequest = useCallback(
+    async (input: NewPullRequestInput) => {
+      const { error } = await supabase.from("pull_requests").insert({
+        environment: input.environment,
+        pr_number: input.pr_number?.trim() || null,
+        title: input.title?.trim() || null,
+        url: input.url?.trim() || null,
+        status: input.status ?? "PENDING",
+        notes: input.notes?.trim() || null,
+      });
+      if (error) throw new Error(error.message);
+      await refetch();
+    },
+    [supabase, refetch],
+  );
+
+  const updatePullRequest = useCallback(
+    async (id: string, patch: Partial<PullRequest>) => {
+      setData((prev) => ({
+        ...prev,
+        pullRequests: prev.pullRequests.map((p) => (p.id === id ? { ...p, ...patch } : p)),
+      }));
+      const { error } = await supabase.from("pull_requests").update(patch).eq("id", id);
+      if (error) throw new Error(error.message);
+    },
+    [supabase],
+  );
+
+  const deletePullRequest = useCallback(
+    async (id: string) => {
+      const { error } = await supabase.from("pull_requests").delete().eq("id", id);
+      if (error) throw new Error(error.message);
+      await refetch();
+    },
+    [supabase, refetch],
+  );
+
   const value = useMemo<KnowledgeContextValue>(
     () => ({
       objects,
       snippets,
       tags: data.tags,
       profiles: data.profiles,
+      pullRequests: data.pullRequests,
       loading,
       loadError,
       canEdit,
       isAdmin,
       refetch,
       createObject,
+      duplicateObject,
       updateObject,
       deleteObject,
       toggleObjectFavorite,
@@ -889,6 +1176,7 @@ export function KnowledgeProvider({ children }: { children: ReactNode }) {
       updateColumnValue,
       deleteColumnValue,
       addCodeVersion,
+      updateCodeVersion,
       deleteCodeVersion,
       addArgument,
       updateArgument,
@@ -900,6 +1188,7 @@ export function KnowledgeProvider({ children }: { children: ReactNode }) {
       toggleObjectTag,
       toggleSnippetTag,
       createSnippet,
+      duplicateSnippet,
       updateSnippet,
       deleteSnippet,
       toggleSnippetFavorite,
@@ -907,18 +1196,23 @@ export function KnowledgeProvider({ children }: { children: ReactNode }) {
       deleteSnippetParameter,
       addSnippetObject,
       removeSnippetObject,
+      createPullRequest,
+      updatePullRequest,
+      deletePullRequest,
     }),
     [
       objects,
       snippets,
       data.tags,
       data.profiles,
+      data.pullRequests,
       loading,
       loadError,
       canEdit,
       isAdmin,
       refetch,
       createObject,
+      duplicateObject,
       updateObject,
       deleteObject,
       toggleObjectFavorite,
@@ -930,6 +1224,7 @@ export function KnowledgeProvider({ children }: { children: ReactNode }) {
       updateColumnValue,
       deleteColumnValue,
       addCodeVersion,
+      updateCodeVersion,
       deleteCodeVersion,
       addArgument,
       updateArgument,
@@ -941,6 +1236,7 @@ export function KnowledgeProvider({ children }: { children: ReactNode }) {
       toggleObjectTag,
       toggleSnippetTag,
       createSnippet,
+      duplicateSnippet,
       updateSnippet,
       deleteSnippet,
       toggleSnippetFavorite,
@@ -948,6 +1244,9 @@ export function KnowledgeProvider({ children }: { children: ReactNode }) {
       deleteSnippetParameter,
       addSnippetObject,
       removeSnippetObject,
+      createPullRequest,
+      updatePullRequest,
+      deletePullRequest,
     ],
   );
 

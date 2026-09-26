@@ -6,11 +6,51 @@ import { Select } from "@/components/ui/select";
 import { ENVIRONMENTS } from "@/lib/knowledge/constants";
 import { cn } from "@/lib/utils";
 import { useKnowledge } from "@/providers/knowledge-provider";
-import { Database, FileCode2, Hash, Search as SearchIcon, Tag as TagIcon } from "lucide-react";
+import { Code2, Database, FileCode2, Hash, Search as SearchIcon, Tag as TagIcon } from "lucide-react";
 import Link from "next/link";
 import { useMemo, useState } from "react";
 
 const ALL = "__all__";
+
+/** Sinónimos de negocio para búsqueda "semántica" básica. */
+const SYNONYMS: Record<string, string[]> = {
+  kilometros: ["kms", "km", "kilometro"],
+  kms: ["kilometros", "km"],
+  km: ["kms", "kilometros"],
+  empresa: ["emp", "compania"],
+  pasajero: ["pax", "pasaj"],
+  tiquete: ["tiquetes", "ticket", "tikete"],
+  tiquetes: ["tiquete", "ticket"],
+  factura: ["fact", "facturacion"],
+  contabilidad: ["contable", "contab"],
+  disponible: ["disp", "disponibles", "saldo"],
+  saldo: ["disponible", "disponibles"],
+  usuario: ["user", "usr"],
+  producto: ["prod", "material"],
+  material: ["producto", "prod"],
+  agencia: ["agc", "oficina"],
+  cierre: ["cerrar", "clausura"],
+  movimiento: ["mov", "transaccion"],
+};
+
+function levenshtein(a: string, b: string): number {
+  const m = a.length;
+  const n = b.length;
+  if (m === 0) return n;
+  if (n === 0) return m;
+  const prev = new Array<number>(n + 1);
+  const curr = new Array<number>(n + 1);
+  for (let j = 0; j <= n; j++) prev[j] = j;
+  for (let i = 1; i <= m; i++) {
+    curr[0] = i;
+    for (let j = 1; j <= n; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      curr[j] = Math.min(prev[j] + 1, curr[j - 1] + 1, prev[j - 1] + cost);
+    }
+    for (let j = 0; j <= n; j++) prev[j] = curr[j];
+  }
+  return prev[n];
+}
 
 type ResultKind =
   | "TABLE"
@@ -24,7 +64,8 @@ type ResultKind =
   | "MATERIALIZED_VIEW"
   | "COLUMN"
   | "VALUE"
-  | "SQL";
+  | "SQL"
+  | "PLSQL";
 
 interface ResultItem {
   key: string;
@@ -48,6 +89,7 @@ const KIND_LABELS: Record<ResultKind, string> = {
   COLUMN: "COLUMN",
   VALUE: "VALUE",
   SQL: "SQL",
+  PLSQL: "PLSQL",
 };
 
 export function SearchPanel({ initialQuery = "" }: { initialQuery?: string }) {
@@ -71,8 +113,26 @@ export function SearchPanel({ initialQuery = "" }: { initialQuery?: string }) {
   const results = useMemo<ResultItem[]>(() => {
     const q = query.trim().toLowerCase();
     const items: ResultItem[] = [];
+    const terms = q.split(/\s+/).filter(Boolean);
+
+    const textMatches = (text: string): boolean => {
+      if (terms.length === 0) return true;
+      const lower = text.toLowerCase();
+      return terms.every((term) => {
+        const variants = [term, ...(SYNONYMS[term] ?? [])];
+        if (variants.some((v) => lower.includes(v))) return true;
+        if (term.length >= 5) {
+          return lower
+            .split(/[^a-z0-9_$#]+/)
+            .filter((w) => w.length >= 4)
+            .some((w) => levenshtein(w, term) <= 1);
+        }
+        return false;
+      });
+    };
+
     const matches = (values: (string | null | undefined)[]) =>
-      q.length === 0 || values.some((v) => (v ?? "").toLowerCase().includes(q));
+      terms.length === 0 || values.some((v) => textMatches(v ?? ""));
 
     for (const object of objects) {
       if (schema !== ALL && object.schema_name !== schema) continue;
@@ -131,6 +191,37 @@ export function SearchPanel({ initialQuery = "" }: { initialQuery?: string }) {
           }
         }
       }
+
+      // Búsqueda dentro del código (procedures, functions, packages)
+      if (terms.length > 0 && object.code_versions.length > 0) {
+        const latestByKey = new Map<string, (typeof object.code_versions)[number]>();
+        for (const version of object.code_versions) {
+          const key = `${version.source_type}:${version.environment ?? ""}`;
+          const current = latestByKey.get(key);
+          if (!current || current.created_at < version.created_at) {
+            latestByKey.set(key, version);
+          }
+        }
+        for (const version of latestByKey.values()) {
+          const codeLines = version.source_code.replace(/\r\n?/g, "\n").split("\n");
+          let hits = 0;
+          for (let index = 0; index < codeLines.length && hits < 2; index++) {
+            if (textMatches(codeLines[index])) {
+              hits++;
+              items.push({
+                key: `code-${version.id}-${index}`,
+                kind: "PLSQL",
+                name: object.object_name,
+                context: `${object.schema_name} · ${version.source_type}${
+                  version.environment ? ` · ${version.environment}` : ""
+                } · v${version.version_number} · L${index + 1}`,
+                description: codeLines[index].trim().slice(0, 200),
+                href: `/knowledge/objects/${object.id}`,
+              });
+            }
+          }
+        }
+      }
     }
 
     for (const snippet of snippets) {
@@ -160,7 +251,8 @@ export function SearchPanel({ initialQuery = "" }: { initialQuery?: string }) {
       <header className="border-b border-border bg-card px-4 py-4 md:px-6">
         <h1 className="text-lg font-semibold">Búsqueda global</h1>
         <p className="text-sm text-muted-foreground">
-          Busca en tablas, vistas, columnas, valores, SQL, procedures, functions y packages.
+          Busca en tablas, vistas, columnas, valores, SQL y dentro del código. Incluye sinónimos y
+          coincidencias aproximadas (ej. “kilometros” encuentra “kms”).
         </p>
 
         <div className="relative mt-4">
@@ -291,6 +383,7 @@ function ResultIcon({ kind }: { kind: ResultKind }) {
   if (kind === "COLUMN") return <Hash className={className} />;
   if (kind === "VALUE") return <TagIcon className={className} />;
   if (kind === "SQL") return <FileCode2 className={className} />;
+  if (kind === "PLSQL") return <Code2 className={className} />;
   if (kind === "TABLE" || kind === "VIEW") return <Database className={className} />;
   return <ObjectTypeBadge type={kind} />;
 }

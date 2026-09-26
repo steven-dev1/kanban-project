@@ -1,12 +1,13 @@
 "use client";
 
 import { Avatar } from "@/components/ui/dropdown";
+import { useToast } from "@/components/ui/toast";
 import type { CardWithLabels } from "@/lib/types";
 import { cn, DUE_STATE_COLORS, dueState, formatDate } from "@/lib/utils";
 import { useBoard } from "@/providers/board-provider";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { AlignLeft, Calendar, CheckCircle2, Circle, Paperclip } from "lucide-react";
+import { AlignLeft, Calendar, CheckCircle2, CheckSquare, Circle, Paperclip } from "lucide-react";
 import { useEffect, useRef } from "react";
 
 export function CardItem({
@@ -19,6 +20,7 @@ export function CardItem({
   onClick: () => void;
 }) {
   const { toggleCardComplete } = useBoard();
+  const { toast } = useToast();
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
     useSortable({
       id: card.id,
@@ -41,6 +43,8 @@ export function CardItem({
   const labelList = card.card_labels?.map((cl) => cl.labels).filter(Boolean).slice(0, 4);
   const assignees = card.card_assignees ?? [];
   const attachmentCount = card.attachments?.length ?? 0;
+  const checklist = card.card_checklist_items ?? [];
+  const checklistDone = checklist.filter((i) => i.is_done).length;
 
   function handleClick() {
     if (draggedRef.current) {
@@ -85,7 +89,9 @@ export function CardItem({
           onPointerDown={(e) => e.stopPropagation()}
           onClick={(e) => {
             e.stopPropagation();
-            toggleCardComplete(card.id, !card.is_completed);
+            toggleCardComplete(card.id, !card.is_completed).catch((err) =>
+              toast(err instanceof Error ? err.message : "No se pudo actualizar", "error"),
+            );
           }}
           className="absolute top-2 right-2 z-10 rounded-full bg-card/80 p-0.5 transition-colors"
           title={card.is_completed ? "Marcar como pendiente" : "Marcar como completada"}
@@ -141,6 +147,17 @@ export function CardItem({
           <span className="flex items-center gap-1">
             <Paperclip className="h-3.5 w-3.5" />
             {attachmentCount}
+          </span>
+        )}
+        {checklist.length > 0 && (
+          <span
+            className={cn(
+              "flex items-center gap-1",
+              checklistDone === checklist.length && "text-green-600 dark:text-green-400",
+            )}
+          >
+            <CheckSquare className="h-3.5 w-3.5" />
+            {checklistDone}/{checklist.length}
           </span>
         )}
 

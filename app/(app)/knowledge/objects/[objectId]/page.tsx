@@ -6,5 +6,5 @@ export default async function ObjectPage({
   params: Promise<{ objectId: string }>;
 }) {
   const { objectId } = await params;
-  return <ObjectDetail objectId={objectId} />;
+  return <ObjectDetail key={objectId} objectId={objectId} />;
 }

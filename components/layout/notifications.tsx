@@ -2,6 +2,7 @@
 
 import { Button } from "@/components/ui/button";
 import { Dropdown } from "@/components/ui/dropdown";
+import { useToast } from "@/components/ui/toast";
 import { createClient } from "@/lib/supabase/client";
 import type { AppNotification } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -12,6 +13,7 @@ import { useCallback, useEffect, useState } from "react";
 export function Notifications({ userId }: { userId: string }) {
   const supabase = createClient();
   const router = useRouter();
+  const { toast } = useToast();
   const [items, setItems] = useState<AppNotification[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
 
@@ -58,30 +60,61 @@ export function Notifications({ userId }: { userId: string }) {
     setItems((prev) => prev.map((n) => ({ ...n, is_read: true })));
   }
 
+  async function removeNotification(id: string) {
+    await supabase.from("notifications").delete().eq("id", id);
+    setItems((prev) => prev.filter((x) => x.id !== id));
+  }
+
   async function respond(n: AppNotification, accept: boolean) {
     const invitationId = n.metadata?.invitation_id as string | undefined;
+    const sharedId = n.metadata?.shared_item_id as string | undefined;
     setBusy(n.id);
-    if (invitationId) {
-      const { data, error } = accept
-        ? await supabase.rpc("accept_invitation", { p_invitation_id: invitationId })
-        : { data: null, error: null };
-      if (!accept) {
-        await supabase.rpc("decline_invitation", { p_invitation_id: invitationId });
-      }
-      await supabase.from("notifications").update({ is_read: true }).eq("id", n.id);
-      setItems((prev) => prev.map((x) => (x.id === n.id ? { ...x, is_read: true } : x)));
-      setBusy(null);
-      if (accept && !error && data) {
-        router.push(`/boards/${data}`);
+
+    try {
+      if (sharedId) {
+        const itemType = n.metadata?.item_type as string | undefined;
+        if (accept) {
+          const { data, error } = await supabase.rpc("accept_shared_item", { p_id: sharedId });
+          if (error) throw new Error(error.message);
+          await removeNotification(n.id);
+          if (data) {
+            router.push(
+              itemType === "SNIPPET" ? `/knowledge/sql/${data}` : `/knowledge/objects/${data}`,
+            );
+          }
+        } else {
+          const { error } = await supabase.rpc("decline_shared_item", { p_id: sharedId });
+          if (error) throw new Error(error.message);
+          await removeNotification(n.id);
+        }
         return;
       }
+
+      if (invitationId) {
+        if (accept) {
+          const { data, error } = await supabase.rpc("accept_invitation", {
+            p_invitation_id: invitationId,
+          });
+          if (error) throw new Error(error.message);
+          await removeNotification(n.id);
+          if (data) router.push(`/boards/${data}`);
+        } else {
+          const { error } = await supabase.rpc("decline_invitation", {
+            p_invitation_id: invitationId,
+          });
+          if (error) throw new Error(error.message);
+          await removeNotification(n.id);
+        }
+        return;
+      }
+
+      await removeNotification(n.id);
+    } catch (error) {
+      toast(error instanceof Error ? error.message : "No se pudo completar la acción", "error");
       router.refresh();
-      return;
+    } finally {
+      setBusy(null);
     }
-    await supabase.from("notifications").update({ is_read: true }).eq("id", n.id);
-    setItems((prev) => prev.map((x) => (x.id === n.id ? { ...x, is_read: true } : x)));
-    setBusy(null);
-    router.refresh();
   }
 
   return (
@@ -123,6 +156,7 @@ export function Notifications({ userId }: { userId: string }) {
             {items.map((n) => {
               const isInvite =
                 n.type === "board_invite" && !!n.metadata?.invitation_id;
+              const isShared = n.type === "item_shared" && !!n.metadata?.shared_item_id;
               return (
                 <div
                   key={n.id}
@@ -143,7 +177,7 @@ export function Notifications({ userId }: { userId: string }) {
                       <p className="mt-0.5 text-[11px] text-muted-foreground">
                         {new Date(n.created_at).toLocaleString()}
                       </p>
-                      {isInvite && (
+                      {(isInvite || isShared) && (
                         <div className="mt-2 flex gap-2">
                           <Button
                             size="sm"

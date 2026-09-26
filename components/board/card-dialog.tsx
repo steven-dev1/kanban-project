@@ -1,5 +1,6 @@
 "use client";
 
+import { CardChecklist } from "@/components/board/card-checklist";
 import { RichTextEditor } from "@/components/board/rich-text-editor";
 import { Button } from "@/components/ui/button";
 import { useConfirm } from "@/components/ui/confirm";
@@ -278,6 +279,8 @@ export function CardDialog({
           </div>
         </div>
 
+        <CardChecklist card={card} canEdit={canEdit} />
+
         <div className="grid grid-cols-1 gap-5 border-t border-border pt-5 sm:grid-cols-2">
           <div className="flex flex-col gap-2">
             <label className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
@@ -396,7 +399,11 @@ export function CardDialog({
               <Button
                 variant={card.is_completed ? "outline" : "primary"}
                 size="sm"
-                onClick={() => toggleCardComplete(card.id, !card.is_completed)}
+                onClick={() =>
+                  toggleCardComplete(card.id, !card.is_completed).catch((err) =>
+                    toast(err instanceof Error ? err.message : "No se pudo actualizar", "error"),
+                  )
+                }
               >
                 {card.is_completed ? (
                   <>

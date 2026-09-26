@@ -216,22 +216,6 @@ body {
   border-radius: 4px;
 }
 
-#boot-warning {
-  position: fixed;
-  inset-inline: 0;
-  bottom: 0;
-  z-index: 9998;
-  background: #b45309;
-  color: #fff;
-  padding: 10px 14px;
-  font-size: 12px;
-  line-height: 1.4;
-  text-align: center;
-}
-html[data-boot="on"] #boot-warning {
-  display: none;
-}
-
 #runtime-errors {
   display: none;
 }

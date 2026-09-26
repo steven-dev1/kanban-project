@@ -1,11 +1,47 @@
 "use client";
 
-import { Select } from "@/components/ui/select";
 import { EnvironmentBadge } from "@/components/knowledge/ui";
-import { diffLines, diffStats } from "@/lib/knowledge/diff";
+import { Select } from "@/components/ui/select";
+import { diffLines, diffStats, type DiffLine } from "@/lib/knowledge/diff";
 import type { OracleCodeVersion } from "@/lib/types";
-import { formatDate } from "@/lib/utils";
+import { cn, formatDate } from "@/lib/utils";
 import { useMemo, useState } from "react";
+
+interface SplitRow {
+  left: DiffLine | null;
+  right: DiffLine | null;
+  type: "same" | "changed" | "removed" | "added";
+}
+
+function toRows(lines: DiffLine[]): SplitRow[] {
+  const rows: SplitRow[] = [];
+  let i = 0;
+  while (i < lines.length) {
+    if (lines[i].type === "same") {
+      rows.push({ left: lines[i], right: lines[i], type: "same" });
+      i++;
+      continue;
+    }
+    const removed: DiffLine[] = [];
+    const added: DiffLine[] = [];
+    while (i < lines.length && lines[i].type !== "same") {
+      if (lines[i].type === "removed") removed.push(lines[i]);
+      else added.push(lines[i]);
+      i++;
+    }
+    const max = Math.max(removed.length, added.length);
+    for (let k = 0; k < max; k++) {
+      const left = removed[k] ?? null;
+      const right = added[k] ?? null;
+      rows.push({
+        left,
+        right,
+        type: left && right ? "changed" : left ? "removed" : "added",
+      });
+    }
+  }
+  return rows;
+}
 
 export function VersionComparator({ versions }: { versions: OracleCodeVersion[] }) {
   const sorted = useMemo(
@@ -14,14 +50,15 @@ export function VersionComparator({ versions }: { versions: OracleCodeVersion[] 
   );
   const [leftId, setLeftId] = useState(sorted[0]?.id ?? "");
   const [rightId, setRightId] = useState(sorted[sorted.length - 1]?.id ?? "");
+  const [view, setView] = useState<"split" | "unified">("split");
 
   const left = sorted.find((v) => v.id === leftId) ?? null;
   const right = sorted.find((v) => v.id === rightId) ?? null;
 
   const result = useMemo(() => {
-    if (!left || !right || left.id === right.id) return null;
+    if (!left || !right) return null;
     const lines = diffLines(left.source_code, right.source_code);
-    return { lines, stats: diffStats(lines) };
+    return { lines, stats: diffStats(lines), rows: toRows(lines) };
   }, [left, right]);
 
   const label = (version: OracleCodeVersion) =>
@@ -80,12 +117,35 @@ export function VersionComparator({ versions }: { versions: OracleCodeVersion[] 
         </div>
       )}
 
+      <div className="flex items-center justify-end gap-1 text-xs">
+        <button
+          type="button"
+          onClick={() => setView("split")}
+          className={cn(
+            "rounded-md px-2 py-1",
+            view === "split" ? "bg-primary/10 text-primary" : "text-muted-foreground hover:bg-muted",
+          )}
+        >
+          Lado a lado
+        </button>
+        <button
+          type="button"
+          onClick={() => setView("unified")}
+          className={cn(
+            "rounded-md px-2 py-1",
+            view === "unified" ? "bg-primary/10 text-primary" : "text-muted-foreground hover:bg-muted",
+          )}
+        >
+          Unificado
+        </button>
+      </div>
+
       {!result ? (
         <p className="rounded-lg border border-dashed border-border px-4 py-6 text-center text-xs text-muted-foreground">
           Selecciona dos versiones diferentes.
         </p>
-      ) : (
-        <div className="overflow-auto rounded-xl border border-border bg-[#0b1020] font-mono text-[12.5px] leading-5">
+      ) : view === "unified" ? (
+        <div className="max-h-[70vh] overflow-auto rounded-xl border border-border bg-[#0b1020] font-mono text-[12.5px] leading-5">
           <pre className="m-0 min-w-full p-0">
             <code className="block">
               {result.lines.map((line, index) => {
@@ -97,7 +157,7 @@ export function VersionComparator({ versions }: { versions: OracleCodeVersion[] 
                       : "text-slate-300";
                 const marker = line.type === "added" ? "+" : line.type === "removed" ? "-" : " ";
                 return (
-                  <span key={index} className={`flex ${styles}`}>
+                  <span key={index} className={`flex min-w-max ${styles}`}>
                     <span className="w-10 shrink-0 select-none border-r border-white/10 px-2 text-right text-slate-600">
                       {line.oldNumber ?? ""}
                     </span>
@@ -112,7 +172,83 @@ export function VersionComparator({ versions }: { versions: OracleCodeVersion[] 
             </code>
           </pre>
         </div>
+      ) : (
+        <div className="flex overflow-hidden rounded-xl border border-border bg-[#0b1020]">
+          <SplitPane side="left" version={left} rows={result.rows} />
+          <SplitPane side="right" version={right} rows={result.rows} />
+        </div>
       )}
+    </div>
+  );
+}
+
+function SplitPane({
+  side,
+  version,
+  rows,
+}: {
+  side: "left" | "right";
+  version: OracleCodeVersion | null;
+  rows: SplitRow[];
+}) {
+  return (
+    <div
+      className={cn(
+        "flex w-1/2 min-w-0 flex-col",
+        side === "right" && "border-l border-white/10",
+      )}
+    >
+      <div className="flex shrink-0 items-center gap-2 border-b border-white/10 bg-white/[0.03] px-2 py-1 text-[10px] text-slate-300">
+        <span className="font-mono">{version ? `v${version.version_number}` : ""}</span>
+        {version?.environment && (
+          <span className="rounded bg-white/10 px-1 py-0.5">{version.environment}</span>
+        )}
+        <span className="ml-auto text-slate-500">{rows.length} líneas</span>
+      </div>
+      <div className="max-h-[70vh] overflow-auto">
+        <table className="border-collapse font-mono text-[12.5px] leading-5">
+          <tbody>
+            {rows.map((row, index) => {
+              const line = side === "left" ? row.left : row.right;
+              const isRemoved =
+                side === "left" && (row.type === "removed" || row.type === "changed");
+              const isAdded =
+                side === "right" && (row.type === "added" || row.type === "changed");
+              const number = line ? (side === "left" ? line.oldNumber : line.newNumber) : null;
+              return (
+                <tr
+                  key={index}
+                  className={cn(
+                    isRemoved && "bg-red-500/10",
+                    isAdded && "bg-green-500/10",
+                  )}
+                >
+                  <td
+                    className={cn(
+                      "sticky left-0 w-10 min-w-[2.5rem] select-none border-r border-white/10 px-2 text-right align-top tabular-nums",
+                      isRemoved ? "bg-[#2a0f14] text-red-300/60" : "",
+                      isAdded ? "bg-[#0f2417] text-green-300/60" : "",
+                      !isRemoved && !isAdded ? "bg-[#0b1020] text-slate-600" : "",
+                    )}
+                  >
+                    {number ?? ""}
+                  </td>
+                  <td
+                    className={cn(
+                      "whitespace-pre px-2 pr-6 align-top",
+                      isRemoved && "text-red-300",
+                      isAdded && "text-green-300",
+                      !isRemoved && !isAdded && "text-slate-300",
+                    )}
+                  >
+                    {line ? line.text || "\u00a0" : "\u00a0"}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }

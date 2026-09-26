@@ -69,6 +69,7 @@ export interface BoardList {
   position: number;
   is_archived: boolean;
   archived_at: string | null;
+  completed_list_id: string | null;
   created_at: string;
 }
 
@@ -130,6 +131,56 @@ export interface CardWithLabels extends Card {
   card_labels: { label_id: string; labels: Label }[];
   card_assignees: CardAssignee[];
   attachments: Attachment[];
+  card_checklist_items: ChecklistItem[];
+}
+
+export interface ChecklistItem {
+  id: string;
+  card_id: string;
+  text: string;
+  is_done: boolean;
+  position: number;
+  created_at: string;
+}
+
+export type PullRequestStatus = "PENDING" | "APPROVED" | "REJECTED";
+
+export interface PullRequest {
+  id: string;
+  user_id: string;
+  environment: Environment;
+  pr_number: string | null;
+  title: string | null;
+  url: string | null;
+  status: PullRequestStatus;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface KnowledgeActivity {
+  id: string;
+  user_id: string | null;
+  action: "INSERT" | "UPDATE" | "DELETE";
+  entity: string;
+  entity_id: string | null;
+  label: string | null;
+  detail: string | null;
+  created_at: string;
+}
+
+export interface SharedItem {
+  id: string;
+  sender_id: string;
+  recipient_id: string;
+  item_type: "OBJECT" | "SNIPPET";
+  item_id: string;
+  item_label: string;
+  message: string | null;
+  is_read: boolean;
+  status: "PENDING" | "ACCEPTED" | "REJECTED";
+  accepted_item_id: string | null;
+  created_at: string;
 }
 
 // ============================================================================
@@ -148,6 +199,7 @@ export interface OracleObject {
   notes: string | null;
   source: ObjectSource;
   is_favorite: boolean;
+  user_id: string | null;
   created_by: string | null;
   updated_by: string | null;
   created_at: string;
@@ -238,6 +290,7 @@ export interface SqlSnippet {
   notes: string | null;
   warnings: string | null;
   is_favorite: boolean;
+  user_id: string | null;
   created_by: string | null;
   updated_by: string | null;
   created_at: string;

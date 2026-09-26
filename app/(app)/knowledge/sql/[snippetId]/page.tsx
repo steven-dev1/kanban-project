@@ -6,5 +6,5 @@ export default async function SnippetPage({
   params: Promise<{ snippetId: string }>;
 }) {
   const { snippetId } = await params;
-  return <SnippetDetail snippetId={snippetId} />;
+  return <SnippetDetail key={snippetId} snippetId={snippetId} />;
 }

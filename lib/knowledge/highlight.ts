@@ -1,6 +1,8 @@
 export type TokenKind =
   | "plain"
   | "keyword"
+  | "type"
+  | "constant"
   | "function"
   | "string"
   | "number"
@@ -14,23 +16,95 @@ export interface Token {
 
 const KEYWORDS = new Set(
   (
-    "select from where and or not null is in exists between like order by group having " +
-    "join left right inner outer full on as distinct union all intersect minus insert into " +
-    "values update set delete create replace table view index sequence procedure function " +
-    "package body trigger begin end declare if then else elsif loop for while return exit " +
-    "cursor open fetch close exception when others raise commit rollback savepoint pragma " +
-    "type subtype record constant out nocopy default case merge using matched partition over " +
-    "rowid rownum sysdate systimestamp dual with asc desc primary foreign key references " +
-    "constraint check unique grant revoke analyze describe explain truncate drop alter add " +
-    "modify rename column number varchar2 varchar nvarchar2 char nchar clob blob date " +
-    "timestamp interval boolean integer int decimal float raw long rowtype of"
-  ).split(" "),
+    // DML / DDL / SQL
+    "select from where and or not null is in exists between like escape order by group having " +
+    "join left right inner outer full cross natural on using as distinct union all intersect minus " +
+    "insert into values update set delete create replace alter drop truncate table view materialized " +
+    "index sequence synonym trigger procedure function package body type subtype record cursor " +
+    "begin end declare if then else elsif loop for while return exit continue goto raise exception " +
+    "when others pragma autonomous_transaction commit rollback savepoint lock share exclusive nowait " +
+    "merge matched source target delete cascade constraint primary foreign key references check unique " +
+    "default not_null enable disable grant revoke analyze describe explain with asc desc partition over " +
+    "connect start prior level recursive pivot unpivot model fetch first next rows only offset percent " +
+    "bulk collect limit returning into forall while exists any some all case else end as of nowait " +
+    "authid current_user definer invoker deterministic parallel_enable pipelined result_cache " +
+    "in out nocopy authid is as return declare exception when others then loop end if end loop end case " +
+    "open close fetch exit when as session alter system tablespace storage tablespace immediate " +
+    "before after instead each row statement referencing new old for order compound noinline " +
+    "increment by start with minvalue maxvalue cache cycle nocycle order nominvalue nomaxvalue " +
+    "comment on column add modify rename constraint privileges role user identified by grant "
+  )
+    .split(/\s+/)
+    .filter(Boolean),
+);
+
+const TYPES = new Set(
+  (
+    "number numeric decimal dec integer int pls_integer binary_integer natural positive " +
+    "varchar2 varchar nvarchar2 char nchar character long raw rowid urowid " +
+    "date timestamp interval time zone boolean bool " +
+    "clob nclob blob bfile bfile xmltype anydata anyschema anytype object varray nested " +
+    "ref cursor sys_refcursor ref_cursor record rowtype type " +
+    "float real double precision binary_float binary_double " +
+    "smallint mediumint bigint tinyint serial uuid json jsonb bytea text " +
+    "string varchar2_t"
+  )
+    .split(/\s+/)
+    .filter(Boolean),
+);
+
+const CONSTANTS = new Set([
+  "true",
+  "false",
+  "null",
+  "sysdate",
+  "systimestamp",
+  "current_date",
+  "current_timestamp",
+  "user",
+  "uid",
+  "rowid",
+  "rownum",
+  "level",
+  "dual",
+]);
+
+const FUNCTIONS = new Set(
+  (
+    "count sum avg min max stddev variance median " +
+    "nvl nvl2 coalesce decode case ifnull nullif " +
+    "to_char to_date to_number to_timestamp to_clob to_blob " +
+    "substr substrb length lengthb instr instrb lpad rpad trim ltrim rtrim replace translate " +
+    "upper lower initcap concat " +
+    "round trunc ceil floor mod power sqrt exp ln log abs sign " +
+    "add_months months_between next_day last_day extract " +
+    "row_number rank dense_rank ntile percent_rank cume_dist lead lag first_value last_value nth_value " +
+    "listagg wm_concat xmlagg " +
+    "sys_context sys_guid raise_application_error dbms_output put_line " +
+    "regexp_like regexp_substr regexp_replace regexp_instr regexp_count " +
+    "greatest least cast treat convert " +
+    "json_value json_query json_object json_array json_table json_exists " +
+    "dbms_lob dbms_sql dbms_random dbms_utility utl_file dbms_scheduler dbms_lock " +
+    "coalesce nullif greatest least " +
+    "coalesce"
+  )
+    .split(/\s+/)
+    .filter(Boolean),
 );
 
 const WORD_RE = /[A-Za-z_][A-Za-z0-9_$#]*/;
 
 interface ScanState {
   inBlockComment: boolean;
+}
+
+function classify(word: string, nextNonSpace: string): TokenKind {
+  const upper = word.toUpperCase();
+  if (CONSTANTS.has(upper.toLowerCase()) || CONSTANTS.has(upper)) return "constant";
+  if (TYPES.has(upper.toLowerCase())) return "type";
+  if (KEYWORDS.has(upper.toLowerCase())) return "keyword";
+  if (FUNCTIONS.has(upper.toLowerCase()) || nextNonSpace.startsWith("(")) return "function";
+  return "plain";
 }
 
 function tokenizeLine(line: string, state: ScanState): Token[] {
@@ -46,7 +120,6 @@ function tokenizeLine(line: string, state: ScanState): Token[] {
   };
 
   while (i < line.length) {
-    // Continue a block comment started on a previous line.
     if (state.inBlockComment) {
       const end = line.indexOf("*/", i);
       if (end === -1) {
@@ -109,15 +182,8 @@ function tokenizeLine(line: string, state: ScanState): Token[] {
     if (wordMatch && wordMatch.index === 0) {
       flush();
       const word = wordMatch[0];
-      const upper = word.toUpperCase();
       const after = line.slice(i + word.length).replace(/^\s+/, "");
-      if (KEYWORDS.has(upper)) {
-        tokens.push({ text: word, kind: "keyword" });
-      } else if (after.startsWith("(")) {
-        tokens.push({ text: word, kind: "function" });
-      } else {
-        tokens.push({ text: word, kind: "plain" });
-      }
+      tokens.push({ text: word, kind: classify(word, after) });
       i += word.length;
       continue;
     }
@@ -145,6 +211,8 @@ export function tokenizeLines(code: string): Token[][] {
 export const TOKEN_CLASS: Record<TokenKind, string> = {
   plain: "text-slate-200",
   keyword: "text-violet-300 font-medium",
+  type: "text-teal-300",
+  constant: "text-orange-300",
   function: "text-sky-300",
   string: "text-emerald-300",
   number: "text-amber-300",
