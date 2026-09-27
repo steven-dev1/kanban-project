@@ -2,6 +2,7 @@
 
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/components/ui/toast";
+import { toDatabaseError } from "@/lib/db-error";
 import { createClient } from "@/lib/supabase/client";
 import type { AppNotification } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -83,7 +84,7 @@ export default function NotificationsPage() {
         const itemType = n.metadata?.item_type as string | undefined;
         if (accept) {
           const { data, error } = await supabase.rpc("accept_shared_item", { p_id: sharedId });
-          if (error) throw new Error(error.message);
+          if (error) throw toDatabaseError(error);
           await removeNotification(n.id);
           if (data) {
             router.push(
@@ -92,7 +93,7 @@ export default function NotificationsPage() {
           }
         } else {
           const { error } = await supabase.rpc("decline_shared_item", { p_id: sharedId });
-          if (error) throw new Error(error.message);
+          if (error) throw toDatabaseError(error);
           await removeNotification(n.id);
         }
         return;
@@ -103,14 +104,14 @@ export default function NotificationsPage() {
           const { data, error } = await supabase.rpc("accept_invitation", {
             p_invitation_id: invitationId,
           });
-          if (error) throw new Error(error.message);
+          if (error) throw toDatabaseError(error);
           await removeNotification(n.id);
           if (data) router.push(`/boards/${data}`);
         } else {
           const { error } = await supabase.rpc("decline_invitation", {
             p_invitation_id: invitationId,
           });
-          if (error) throw new Error(error.message);
+          if (error) throw toDatabaseError(error);
           await removeNotification(n.id);
         }
         return;

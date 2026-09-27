@@ -1,5 +1,26 @@
 import type { Environment, SourceType } from "@/lib/types";
 
+/** Esquema por defecto del hub: su prefijo se omite en listados y búsquedas. */
+export const DEFAULT_SCHEMA = "SP6DF";
+
+/**
+ * Nombre para mostrar en listados: oculta el prefijo del esquema por defecto.
+ * En el detalle/información se sigue mostrando el schema completo.
+ */
+export function displayObjectName(
+  schemaName: string | null | undefined,
+  objectName: string,
+): string {
+  if (!schemaName || schemaName.toUpperCase() === DEFAULT_SCHEMA) return objectName;
+  return `${schemaName}.${objectName}`;
+}
+
+/** Muestra el esquema salvo que sea el por defecto (entonces devuelve ""). */
+export function displaySchema(schemaName: string | null | undefined): string {
+  if (!schemaName || schemaName.toUpperCase() === DEFAULT_SCHEMA) return "";
+  return schemaName;
+}
+
 /** Removes characters that are invalid in file names and collapses spaces. */
 export function sanitizeFileName(name: string, fallback = "archivo") {
   const cleaned = (name || "")

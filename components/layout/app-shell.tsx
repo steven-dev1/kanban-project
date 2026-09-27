@@ -3,9 +3,11 @@
 import { Avatar, Dropdown, DropdownItem } from "@/components/ui/dropdown";
 import { useAuth } from "@/providers/auth-provider";
 import { cn } from "@/lib/utils";
-import { KanbanSquare, LogOut, Menu, PanelLeftClose, PanelLeftOpen, X } from "lucide-react";
+import { useKeyboardShortcuts } from "@/lib/use-keyboard-shortcuts";
+import { Keyboard, KanbanSquare, LogOut, Menu, PanelLeftClose, PanelLeftOpen, X } from "lucide-react";
 import { useState, useSyncExternalStore, type ReactNode } from "react";
 import { Notifications } from "./notifications";
+import { ShortcutsHelp } from "./shortcuts-help";
 import { Sidebar } from "./sidebar";
 import { ThemeToggle } from "./theme-toggle";
 
@@ -49,6 +51,9 @@ export function AppShell({ children }: { children: ReactNode }) {
     () => false,
   );
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
+
+  useKeyboardShortcuts({ onHelp: () => setHelpOpen(true) });
 
   const toggleCollapsed = () => setStoredCollapsed(!collapsed);
 
@@ -130,6 +135,14 @@ export function AppShell({ children }: { children: ReactNode }) {
             </button>
           </div>
           <div className="flex items-center gap-2">
+            <button
+              className="hidden rounded-lg p-2 text-muted-foreground hover:bg-muted hover:text-foreground sm:block"
+              onClick={() => setHelpOpen(true)}
+              aria-label="Atajos de teclado"
+              title="Atajos de teclado (?)"
+            >
+              <Keyboard className="h-5 w-5" />
+            </button>
             <ThemeToggle />
             {user && <Notifications userId={user.id} />}
             <Dropdown
@@ -164,6 +177,8 @@ export function AppShell({ children }: { children: ReactNode }) {
 
         <main className="min-h-0 flex-1 overflow-hidden">{children}</main>
       </div>
+
+      <ShortcutsHelp open={helpOpen} onClose={() => setHelpOpen(false)} />
     </div>
   );
 }

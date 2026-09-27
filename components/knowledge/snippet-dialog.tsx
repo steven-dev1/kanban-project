@@ -22,7 +22,7 @@ import type {
   SqlSnippet,
 } from "@/lib/types";
 import { useKnowledge } from "@/providers/knowledge-provider";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 
 const NONE = "__none__";
 
@@ -37,9 +37,17 @@ export function SnippetDialog({
   snippet?: SqlSnippet | null;
   onCreated?: (snippet: SqlSnippet) => void;
 }) {
-  const { createSnippet, updateSnippet } = useKnowledge();
+  const { createSnippet, updateSnippet, snippets } = useKnowledge();
   const { toast } = useToast();
   const editing = !!snippet;
+
+  const folders = useMemo(
+    () =>
+      [...new Set(snippets.map((s) => s.folder).filter((f): f is string => Boolean(f)))].sort(
+        (a, b) => a.localeCompare(b),
+      ),
+    [snippets],
+  );
 
   const [title, setTitle] = useState(snippet?.title ?? "");
   const [description, setDescription] = useState(snippet?.description ?? "");
@@ -49,6 +57,7 @@ export function SnippetDialog({
     snippet?.database_type ?? "Oracle",
   );
   const [schemaName, setSchemaName] = useState(snippet?.schema_name ?? "");
+  const [folder, setFolder] = useState(snippet?.folder ?? "");
   const [environment, setEnvironment] = useState<string>(snippet?.environment ?? NONE);
   const [notes, setNotes] = useState(snippet?.notes ?? "");
   const [warnings, setWarnings] = useState(snippet?.warnings ?? "");
@@ -66,14 +75,17 @@ export function SnippetDialog({
 
     setSaving(true);
     try {
+      // Si el código está en una sola línea (pegado), se formatea al guardar.
+      const shouldFormat = sqlCode.trim().split("\n").length === 1;
       const payload = {
         title: title.trim(),
         description: description.trim() || null,
-        sql_code: sqlCode,
+        sql_code: shouldFormat ? formatSql(sqlCode) : sqlCode,
         category,
         database_type: databaseType,
         schema_name: schemaName.trim() || null,
         environment: environment === NONE ? null : (environment as Environment),
+        folder: folder.trim() || null,
         notes: notes.trim() || null,
         warnings: warnings.trim() || null,
       };
@@ -144,13 +156,28 @@ export function SnippetDialog({
           </Field>
         </div>
 
-        <Field label="Schema">
-          <Input
-            value={schemaName}
-            onChange={(e) => setSchemaName(e.target.value.toUpperCase())}
-            placeholder="SP6DF"
-          />
-        </Field>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Field label="Schema">
+            <Input
+              value={schemaName}
+              onChange={(e) => setSchemaName(e.target.value.toUpperCase())}
+              placeholder="SP6DF"
+            />
+          </Field>
+          <Field label="Carpeta" hint="Opcional. Usa / para subcarpetas.">
+            <Input
+              value={folder}
+              onChange={(e) => setFolder(e.target.value)}
+              placeholder="Tiquetes / Cierre"
+              list="snippet-folders"
+            />
+            <datalist id="snippet-folders">
+              {folders.map((name) => (
+                <option key={name} value={name} />
+              ))}
+            </datalist>
+          </Field>
+        </div>
 
         <Field label="SQL *" hint="El sistema solo almacena y muestra la consulta; nunca la ejecuta. Usa Tab para indentar.">
           <CodeEditor

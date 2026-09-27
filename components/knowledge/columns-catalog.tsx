@@ -3,6 +3,7 @@
 import { EmptyState, ObjectTypeBadge, Skeleton } from "@/components/knowledge/ui";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
+import { displayObjectName } from "@/lib/knowledge/format";
 import { useKnowledge } from "@/providers/knowledge-provider";
 import { Columns3, Search } from "lucide-react";
 import Link from "next/link";
@@ -134,7 +135,7 @@ export function ColumnsCatalog() {
                       >
                         <ObjectTypeBadge type={object.object_type} />
                         <span className="truncate">
-                          {object.schema_name}.{object.object_name}
+                          {displayObjectName(object.schema_name, object.object_name)}
                         </span>
                       </Link>
                     </td>

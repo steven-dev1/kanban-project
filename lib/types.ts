@@ -38,6 +38,7 @@ export interface Board {
   description: string | null;
   owner_id: string;
   is_paused: boolean;
+  is_template: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -81,11 +82,54 @@ export interface Card {
   description: string | null;
   position: number;
   due_date: string | null;
+  start_date: string | null;
   is_completed: boolean;
   completed_at: string | null;
   is_archived: boolean;
   archived_at: string | null;
   created_by: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export type BoardFieldType = "TEXT" | "NUMBER" | "DATE" | "SELECT" | "CHECKBOX" | "USER";
+
+export interface BoardField {
+  id: string;
+  board_id: string;
+  name: string;
+  field_type: BoardFieldType;
+  options: string[] | null;
+  position: number;
+  created_at: string;
+}
+
+export interface CardFieldValue {
+  id: string;
+  card_id: string;
+  field_id: string;
+  value: string | null;
+  updated_at: string;
+}
+
+export interface CardActivity {
+  id: string;
+  card_id: string;
+  board_id: string;
+  actor_id: string | null;
+  action: string;
+  detail: string | null;
+  metadata: Record<string, unknown> | null;
+  created_at: string;
+}
+
+export interface CardComment {
+  id: string;
+  card_id: string;
+  board_id: string;
+  author_id: string | null;
+  body: string;
+  mentions: string[];
   created_at: string;
   updated_at: string;
 }
@@ -132,6 +176,7 @@ export interface CardWithLabels extends Card {
   card_assignees: CardAssignee[];
   attachments: Attachment[];
   card_checklist_items: ChecklistItem[];
+  card_field_values?: CardFieldValue[];
 }
 
 export interface ChecklistItem {
@@ -233,6 +278,12 @@ export interface OracleColumn {
   description: string | null;
   business_meaning: string | null;
   notes: string | null;
+  is_primary_key: boolean;
+  is_unique: boolean;
+  references_schema: string | null;
+  references_table: string | null;
+  references_column: string | null;
+  check_expression: string | null;
   source: ObjectSource;
   created_by: string | null;
   updated_by: string | null;
@@ -287,6 +338,7 @@ export interface SqlSnippet {
   database_type: DatabaseType;
   schema_name: string | null;
   environment: Environment | null;
+  folder: string | null;
   notes: string | null;
   warnings: string | null;
   is_favorite: boolean;

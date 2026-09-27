@@ -6,6 +6,7 @@ import { useConfirm } from "@/components/ui/confirm";
 import { Input, Textarea } from "@/components/ui/input";
 import { Modal } from "@/components/ui/modal";
 import { useToast } from "@/components/ui/toast";
+import { isDuplicateError } from "@/lib/db-error";
 import type { OracleColumnWithValues, OracleColumnValue } from "@/lib/types";
 import { useKnowledge } from "@/providers/knowledge-provider";
 import { ChevronDown, ChevronRight, Pencil, Plus, Trash2 } from "lucide-react";
@@ -20,10 +21,12 @@ function toNumberOrNull(value: string): number | null {
 
 export function ColumnsPanel({
   objectId,
+  objectSchema,
   columns,
   canEdit,
 }: {
   objectId: string;
+  objectSchema: string;
   columns: OracleColumnWithValues[];
   canEdit: boolean;
 }) {
@@ -114,6 +117,7 @@ export function ColumnsPanel({
         open={dialogOpen}
         onClose={() => setDialogOpen(false)}
         objectId={objectId}
+        objectSchema={objectSchema}
         column={editing}
         nextOrder={columns.length ? Math.max(...columns.map((c) => c.column_order ?? 0)) + 1 : 1}
         onSubmit={async (values) => {
@@ -159,7 +163,10 @@ function ColumnRows({
             )}
           </button>
         </td>
-        <td className="px-3 py-2 font-mono text-xs font-medium">{column.column_name}</td>
+        <td className="px-3 py-2">
+          <span className="font-mono text-xs font-medium">{column.column_name}</span>
+          <ColumnKeyBadges column={column} />
+        </td>
         <td className="px-3 py-2 text-xs text-muted-foreground">{typeLabel || "—"}</td>
         <td className="px-3 py-2 text-xs text-muted-foreground">
           {column.nullable ? "Sí" : "No"}
@@ -330,11 +337,18 @@ interface ColumnFormValues {
   description: string | null;
   business_meaning: string | null;
   notes: string | null;
+  is_primary_key: boolean;
+  is_unique: boolean;
+  references_schema: string | null;
+  references_table: string | null;
+  references_column: string | null;
+  check_expression: string | null;
 }
 
 function ColumnFormDialog({
   open,
   onClose,
+  objectSchema,
   column,
   nextOrder,
   onSubmit,
@@ -342,6 +356,7 @@ function ColumnFormDialog({
   open: boolean;
   onClose: () => void;
   objectId: string;
+  objectSchema: string;
   column: OracleColumnWithValues | null;
   nextOrder: number;
   onSubmit: (values: ColumnFormValues) => Promise<void>;
@@ -364,6 +379,12 @@ function ColumnFormDialog({
   const [description, setDescription] = useState(column?.description ?? "");
   const [businessMeaning, setBusinessMeaning] = useState(column?.business_meaning ?? "");
   const [notes, setNotes] = useState(column?.notes ?? "");
+  const [isPrimaryKey, setIsPrimaryKey] = useState(column?.is_primary_key ?? false);
+  const [isUnique, setIsUnique] = useState(column?.is_unique ?? false);
+  const [hasReference, setHasReference] = useState(Boolean(column?.references_table));
+  const [refTable, setRefTable] = useState(column?.references_table ?? "");
+  const [refColumn, setRefColumn] = useState(column?.references_column ?? "");
+  const [checkExpression, setCheckExpression] = useState(column?.check_expression ?? "");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -372,25 +393,39 @@ function ColumnFormDialog({
     if (!columnName.trim()) return setError("El nombre de la columna es obligatorio");
     setSaving(true);
     try {
+      const refInput = refTable.trim().toUpperCase();
+      const dotIndex = refInput.indexOf(".");
+      const referencesSchema = hasReference
+        ? (dotIndex !== -1 ? refInput.slice(0, dotIndex) : objectSchema) || null
+        : null;
+      const referencesTable = hasReference
+        ? (dotIndex !== -1 ? refInput.slice(dotIndex + 1) : refInput) || null
+        : null;
+
       await onSubmit({
         column_name: columnName.trim().toUpperCase(),
         data_type: dataType.trim() || null,
         data_length: toNumberOrNull(dataLength),
         data_precision: toNumberOrNull(precision),
         data_scale: toNumberOrNull(scale),
-        nullable,
+        nullable: isPrimaryKey ? false : nullable,
         column_order: toNumberOrNull(order),
         description: description.trim() || null,
         business_meaning: businessMeaning.trim() || null,
         notes: notes.trim() || null,
+        is_primary_key: isPrimaryKey,
+        is_unique: isUnique,
+        references_schema: referencesSchema,
+        references_table: referencesTable,
+        references_column:
+          hasReference && refColumn.trim() ? refColumn.trim().toUpperCase() : null,
+        check_expression: checkExpression.trim() || null,
       });
       onClose();
     } catch (err) {
       const message = err instanceof Error ? err.message : "Error";
       setError(
-        message.includes("duplicate") || message.includes("unique")
-          ? "Ya existe una columna con ese nombre."
-          : message,
+        isDuplicateError(err) ? "Ya existe una columna con ese nombre." : message,
       );
     } finally {
       setSaving(false);
@@ -442,7 +477,8 @@ function ColumnFormDialog({
             <label className="flex h-9 items-center gap-2 rounded-lg border border-input bg-card px-3 text-sm">
               <input
                 type="checkbox"
-                checked={nullable}
+                checked={isPrimaryKey ? false : nullable}
+                disabled={isPrimaryKey}
                 onChange={(e) => setNullable(e.target.checked)}
                 className="h-4 w-4 accent-[var(--primary)]"
               />
@@ -450,6 +486,69 @@ function ColumnFormDialog({
             </label>
           </Field>
         </div>
+
+        <div className="grid gap-4 sm:grid-cols-2">
+          <label className="flex h-9 items-center gap-2 rounded-lg border border-input bg-card px-3 text-sm">
+            <input
+              type="checkbox"
+              checked={isPrimaryKey}
+              onChange={(e) => setIsPrimaryKey(e.target.checked)}
+              className="h-4 w-4 accent-[var(--primary)]"
+            />
+            Primary key
+          </label>
+          <label className="flex h-9 items-center gap-2 rounded-lg border border-input bg-card px-3 text-sm">
+            <input
+              type="checkbox"
+              checked={isUnique}
+              onChange={(e) => setIsUnique(e.target.checked)}
+              className="h-4 w-4 accent-[var(--primary)]"
+            />
+            Unique
+          </label>
+        </div>
+
+        <div className="space-y-3 rounded-lg border border-border p-3">
+          <label className="flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={hasReference}
+              onChange={(e) => setHasReference(e.target.checked)}
+              className="h-4 w-4 accent-[var(--primary)]"
+            />
+            Esta columna es clave foránea
+          </label>
+          {hasReference && (
+            <div className="grid gap-2 sm:grid-cols-2">
+              <Field label="Tabla referenciada *">
+                <Input
+                  value={refTable}
+                  onChange={(e) => setRefTable(e.target.value.toUpperCase())}
+                  placeholder="CLIENTES"
+                />
+              </Field>
+              <Field label="Columna referenciada">
+                <Input
+                  value={refColumn}
+                  onChange={(e) => setRefColumn(e.target.value.toUpperCase())}
+                  placeholder="ID_CLIENTE"
+                />
+              </Field>
+              <p className="text-[11px] text-muted-foreground sm:col-span-2">
+                Se asume el esquema actual ({objectSchema}). Usa <code>ESQUEMA.TABLA</code> si la
+                tabla referenciada está en otro esquema.
+              </p>
+            </div>
+          )}
+        </div>
+
+        <Field label="CHECK (opcional)">
+          <Input
+            value={checkExpression}
+            onChange={(e) => setCheckExpression(e.target.value)}
+            placeholder="SALDO >= 0"
+          />
+        </Field>
 
         <Field label="Descripción técnica">
           <Textarea rows={2} value={description} onChange={(e) => setDescription(e.target.value)} />
@@ -477,6 +576,47 @@ function ColumnFormDialog({
         </div>
       </div>
     </Modal>
+  );
+}
+
+function ColumnKeyBadges({ column }: { column: OracleColumnWithValues }) {
+  const reference = column.references_table
+    ? `${[column.references_schema, column.references_table].filter(Boolean).join(".")}${
+        column.references_column ? `(${column.references_column})` : ""
+      }`
+    : null;
+  if (!column.is_primary_key && !column.is_unique && !reference && !column.check_expression) {
+    return null;
+  }
+  return (
+    <div className="mt-1 flex flex-wrap gap-1">
+      {column.is_primary_key && (
+        <span className="rounded bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-amber-600 dark:text-amber-400">
+          PK
+        </span>
+      )}
+      {column.is_unique && (
+        <span className="rounded bg-sky-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-sky-600 dark:text-sky-400">
+          UNIQUE
+        </span>
+      )}
+      {reference && (
+        <span
+          title={`REFERENCES ${reference}`}
+          className="rounded bg-violet-500/15 px-1.5 py-0.5 font-mono text-[10px] font-semibold text-violet-600 dark:text-violet-400"
+        >
+          FK → {reference}
+        </span>
+      )}
+      {column.check_expression && (
+        <span
+          title={column.check_expression}
+          className="rounded bg-emerald-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-600 dark:text-emerald-400"
+        >
+          CHECK
+        </span>
+      )}
+    </div>
   );
 }
 

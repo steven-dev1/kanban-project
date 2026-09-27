@@ -49,7 +49,8 @@ export function BoardsDashboard() {
       .from("boards")
       .select("*, board_members(count), cards(count)")
       .order("updated_at", { ascending: false });
-    setBoards((data as BoardRow[]) ?? []);
+    // Las plantillas no se muestran como tableros normales.
+    setBoards(((data as BoardRow[]) ?? []).filter((b) => !b.is_template));
     setLoading(false);
   }, [supabase]);
 

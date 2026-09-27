@@ -1,13 +1,19 @@
 "use client";
 
+import { toDatabaseError } from "@/lib/db-error";
 import { createClient } from "@/lib/supabase/client";
 import type {
   Attachment,
   Board,
+  BoardField,
+  BoardFieldType,
   BoardInvitation,
   BoardList,
   BoardMember,
   Card,
+  CardActivity,
+  CardComment,
+  CardFieldValue,
   CardWithLabels,
   Label,
   Profile,
@@ -81,6 +87,16 @@ interface BoardContextValue {
   removeMember: (memberId: string) => Promise<void>;
   cancelInvitation: (id: string) => Promise<void>;
   togglePause: () => Promise<void>;
+  fields: BoardField[];
+  createField: (name: string, fieldType: BoardFieldType, options?: string[]) => Promise<void>;
+  updateField: (id: string, patch: Partial<BoardField>) => Promise<void>;
+  deleteField: (id: string) => Promise<void>;
+  setCardFieldValue: (cardId: string, fieldId: string, value: string | null) => Promise<void>;
+  commentsFor: (cardId: string) => CardComment[];
+  addComment: (cardId: string, body: string, mentions: string[]) => Promise<void>;
+  deleteComment: (id: string) => Promise<void>;
+  activityFor: (cardId: string) => CardActivity[];
+  saveAsTemplate: () => Promise<void>;
 }
 
 const BoardContext = createContext<BoardContextValue | null>(null);
@@ -106,35 +122,61 @@ export function BoardProvider({
   const [members, setMembers] = useState<MemberWithProfile[]>([]);
   const [ownerProfile, setOwnerProfile] = useState<Profile | null>(null);
   const [invitations, setInvitations] = useState<BoardInvitation[]>([]);
+  const [fields, setFields] = useState<BoardField[]>([]);
+  const [comments, setComments] = useState<CardComment[]>([]);
+  const [activity, setActivity] = useState<CardActivity[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
 
   const reloadTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const refetch = useCallback(async () => {
-    const [boardRes, listsRes, cardsRes, labelsRes, membersRes, invitesRes] =
-      await Promise.all([
-        supabase.from("boards").select("*").eq("id", boardId).maybeSingle(),
-        supabase.from("lists").select("*").eq("board_id", boardId).order("position"),
-        supabase
-          .from("cards")
-          .select(
-            "*, card_labels(label_id, labels(*)), card_assignees(user_id, profile:profiles(*)), attachments(*), card_checklist_items(*)",
-          )
-          .eq("board_id", boardId)
-          .order("position"),
-        supabase.from("labels").select("*").eq("board_id", boardId).order("created_at"),
-        supabase
-          .from("board_members")
-          .select("*, profile:profiles(*)")
-          .eq("board_id", boardId),
-        supabase
-          .from("board_invitations")
-          .select("*")
-          .eq("board_id", boardId)
-          .eq("status", "pending")
-          .order("created_at", { ascending: false }),
-      ]);
+    const [
+      boardRes,
+      listsRes,
+      cardsRes,
+      labelsRes,
+      membersRes,
+      invitesRes,
+      fieldsRes,
+      fieldValuesRes,
+      commentsRes,
+      activityRes,
+    ] = await Promise.all([
+      supabase.from("boards").select("*").eq("id", boardId).maybeSingle(),
+      supabase.from("lists").select("*").eq("board_id", boardId).order("position"),
+      supabase
+        .from("cards")
+        .select(
+          "*, card_labels(label_id, labels(*)), card_assignees(user_id, profile:profiles(*)), attachments(*), card_checklist_items(*)",
+        )
+        .eq("board_id", boardId)
+        .order("position"),
+      supabase.from("labels").select("*").eq("board_id", boardId).order("created_at"),
+      supabase.from("board_members").select("*, profile:profiles(*)").eq("board_id", boardId),
+      supabase
+        .from("board_invitations")
+        .select("*")
+        .eq("board_id", boardId)
+        .eq("status", "pending")
+        .order("created_at", { ascending: false }),
+      supabase.from("board_fields").select("*").eq("board_id", boardId).order("position"),
+      supabase
+        .from("card_field_values")
+        .select("*, cards!inner(board_id)")
+        .eq("cards.board_id", boardId),
+      supabase
+        .from("card_comments")
+        .select("*")
+        .eq("board_id", boardId)
+        .order("created_at"),
+      supabase
+        .from("card_activity")
+        .select("*")
+        .eq("board_id", boardId)
+        .order("created_at", { ascending: false })
+        .limit(500),
+    ]);
 
     const firstError = [
       boardRes,
@@ -143,8 +185,12 @@ export function BoardProvider({
       labelsRes,
       membersRes,
       invitesRes,
+      fieldsRes,
+      fieldValuesRes,
+      commentsRes,
+      activityRes,
     ].find((r) => r.error)?.error;
-    setLoadError(firstError ? firstError.message : null);
+    setLoadError(firstError ? toDatabaseError(firstError).message : null);
 
     const boardData = (boardRes.data as Board) ?? null;
     setBoard(boardData);
@@ -160,7 +206,16 @@ export function BoardProvider({
     }
 
     const allLists = (listsRes.data as BoardList[]) ?? [];
-    const allCards = (cardsRes.data as CardWithLabels[]) ?? [];
+    const valuesByCard = new Map<string, CardFieldValue[]>();
+    for (const value of (fieldValuesRes.data as CardFieldValue[]) ?? []) {
+      const list = valuesByCard.get(value.card_id) ?? [];
+      list.push(value);
+      valuesByCard.set(value.card_id, list);
+    }
+    const allCards = ((cardsRes.data as CardWithLabels[]) ?? []).map((card) => ({
+      ...card,
+      card_field_values: valuesByCard.get(card.id) ?? [],
+    }));
     const activeLists = allLists.filter((l) => !l.is_archived).sort(byPosition);
 
     setLists(
@@ -176,6 +231,9 @@ export function BoardProvider({
     setLabels((labelsRes.data as Label[]) ?? []);
     setMembers((membersRes.data as MemberWithProfile[]) ?? []);
     setInvitations((invitesRes.data as BoardInvitation[]) ?? []);
+    setFields((fieldsRes.data as BoardField[]) ?? []);
+    setComments((commentsRes.data as CardComment[]) ?? []);
+    setActivity((activityRes.data as CardActivity[]) ?? []);
     setLoading(false);
   }, [supabase, boardId]);
 
@@ -241,6 +299,26 @@ export function BoardProvider({
         { event: "*", schema: "public", table: "board_invitations", filter: `board_id=eq.${boardId}` },
         scheduleRefetch,
       )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "board_fields", filter: `board_id=eq.${boardId}` },
+        scheduleRefetch,
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "card_comments", filter: `board_id=eq.${boardId}` },
+        scheduleRefetch,
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "card_activity", filter: `board_id=eq.${boardId}` },
+        scheduleRefetch,
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "card_field_values" },
+        scheduleRefetch,
+      )
       .subscribe();
 
     return () => {
@@ -253,6 +331,21 @@ export function BoardProvider({
   const isOwner = !!board && !!user && board.owner_id === user.id;
   const myMembership = members.find((m) => m.user_id === user?.id);
   const isAdmin = isOwner || myMembership?.role === "admin";
+
+  /** Registra un evento de actividad de tarjeta (no bloquea la acción). */
+  const logActivity = useCallback(
+    async (cardId: string, action: string, detail?: string) => {
+      if (!user) return;
+      await supabase.from("card_activity").insert({
+        card_id: cardId,
+        board_id: boardId,
+        actor_id: user.id,
+        action,
+        detail: detail ?? null,
+      });
+    },
+    [supabase, boardId, user],
+  );
 
   const addList = useCallback(
     async (title: string, color: string) => {
@@ -321,16 +414,17 @@ export function BoardProvider({
           "*, card_labels(label_id, labels(*)), card_assignees(user_id, profile:profiles(*)), attachments(*), card_checklist_items(*)",
         )
         .single();
-      if (error) throw new Error(error.message);
+      if (error) throw toDatabaseError(error);
       if (data) {
         const card = data as CardWithLabels;
         setLists((prev) =>
           prev.map((l) => (l.id === listId ? { ...l, cards: [...l.cards, card] } : l)),
         );
+        void logActivity(card.id, "create", `Creó la tarjeta "${title}"`);
       }
       return (data as Card) ?? null;
     },
-    [supabase, boardId, lists, user],
+    [supabase, boardId, lists, user, logActivity],
   );
 
   const updateCard = useCallback(
@@ -342,8 +436,12 @@ export function BoardProvider({
         })),
       );
       await supabase.from("cards").update(patch).eq("id", id);
+      const changes = Object.keys(patch)
+        .filter((k) => !["updated_at", "position"].includes(k))
+        .join(", ");
+      if (changes) void logActivity(id, "update", `Actualizó ${changes}`);
     },
-    [supabase],
+    [supabase, logActivity],
   );
 
   const toggleCardComplete = useCallback(
@@ -385,10 +483,11 @@ export function BoardProvider({
       if (error) {
         // No se guardó: resincronizamos con la base.
         await refetch();
-        throw new Error(error.message);
+        throw toDatabaseError(error);
       }
+      void logActivity(cardId, "complete", completed ? "Marcó como completada" : "Reabrió");
     },
-    [supabase, lists, refetch],
+    [supabase, lists, refetch, logActivity],
   );
 
   const addChecklistItem = useCallback(
@@ -399,7 +498,7 @@ export function BoardProvider({
       const { error } = await supabase
         .from("card_checklist_items")
         .insert({ card_id: cardId, text, position });
-      if (error) throw new Error(error.message);
+      if (error) throw toDatabaseError(error);
       await refetch();
     },
     [supabase, lists, refetch],
@@ -422,7 +521,7 @@ export function BoardProvider({
         .from("card_checklist_items")
         .update({ is_done: done })
         .eq("id", id);
-      if (error) throw new Error(error.message);
+      if (error) throw toDatabaseError(error);
     },
     [supabase],
   );
@@ -444,7 +543,7 @@ export function BoardProvider({
         .from("card_checklist_items")
         .update({ text })
         .eq("id", id);
-      if (error) throw new Error(error.message);
+      if (error) throw toDatabaseError(error);
     },
     [supabase],
   );
@@ -461,7 +560,7 @@ export function BoardProvider({
         })),
       );
       const { error } = await supabase.from("card_checklist_items").delete().eq("id", id);
-      if (error) throw new Error(error.message);
+      if (error) throw toDatabaseError(error);
     },
     [supabase],
   );
@@ -491,7 +590,7 @@ export function BoardProvider({
         .single();
 
       if (error || !data) {
-        throw new Error(error?.message ?? "No se pudo duplicar la card");
+        throw toDatabaseError(error, { fallback: "No se pudo duplicar la tarjeta." });
       }
 
       const newId = data.id as string;
@@ -589,8 +688,13 @@ export function BoardProvider({
         .from("cards")
         .update({ list_id: targetListId, position })
         .eq("id", cardId);
+      const fromList = lists.find((l) => l.id === moved.list_id)?.title ?? "";
+      const toList = lists.find((l) => l.id === targetListId)?.title ?? "";
+      if (fromList !== toList) {
+        void logActivity(cardId, "move", `Movió de "${fromList}" a "${toList}"`);
+      }
     },
-    [supabase, lists],
+    [supabase, lists, logActivity],
   );
 
   const createLabel = useCallback(
@@ -664,7 +768,7 @@ export function BoardProvider({
           contentType: file.type || "application/octet-stream",
           upsert: false,
         });
-      if (uploadError) return uploadError.message;
+      if (uploadError) return toDatabaseError(uploadError).message;
 
       const { error: dbError } = await supabase.from("attachments").insert({
         card_id: cardId,
@@ -677,7 +781,7 @@ export function BoardProvider({
       });
       if (dbError) {
         await supabase.storage.from("attachments").remove([path]);
-        return dbError.message;
+        return toDatabaseError(dbError).message;
       }
       await refetch();
       return null;
@@ -731,7 +835,7 @@ export function BoardProvider({
           role,
           invited_by: user?.id ?? null,
         });
-        if (error) return { error: error.message, warning: null };
+        if (error) return { error: toDatabaseError(error).message, warning: null };
 
         await refetch();
 
@@ -786,6 +890,197 @@ export function BoardProvider({
     await refetch();
   }, [supabase, board, refetch]);
 
+  const createField = useCallback(
+    async (name: string, fieldType: BoardFieldType, options?: string[]) => {
+      const position = fields.reduce((acc, f) => Math.max(acc, f.position), 0) + 1000;
+      const { error } = await supabase.from("board_fields").insert({
+        board_id: boardId,
+        name: name.trim(),
+        field_type: fieldType,
+        options: fieldType === "SELECT" ? options ?? [] : null,
+        position,
+      });
+      if (error) throw toDatabaseError(error);
+      await refetch();
+    },
+    [supabase, boardId, fields, refetch],
+  );
+
+  const updateField = useCallback(
+    async (id: string, patch: Partial<BoardField>) => {
+      setFields((prev) => prev.map((f) => (f.id === id ? { ...f, ...patch } : f)));
+      const { error } = await supabase.from("board_fields").update(patch).eq("id", id);
+      if (error) throw toDatabaseError(error);
+    },
+    [supabase],
+  );
+
+  const deleteField = useCallback(
+    async (id: string) => {
+      const { error } = await supabase.from("board_fields").delete().eq("id", id);
+      if (error) throw toDatabaseError(error);
+      await refetch();
+    },
+    [supabase, refetch],
+  );
+
+  const setCardFieldValue = useCallback(
+    async (cardId: string, fieldId: string, value: string | null) => {
+      setLists((prev) =>
+        prev.map((list) => ({
+          ...list,
+          cards: list.cards.map((card) =>
+            card.id === cardId
+              ? {
+                  ...card,
+                  card_field_values: [
+                    ...(card.card_field_values ?? []).filter((v) => v.field_id !== fieldId),
+                    {
+                      id: `tmp-${cardId}-${fieldId}`,
+                      card_id: cardId,
+                      field_id: fieldId,
+                      value,
+                      updated_at: new Date().toISOString(),
+                    },
+                  ],
+                }
+              : card,
+          ),
+        })),
+      );
+      const { error } = await supabase
+        .from("card_field_values")
+        .upsert(
+          { card_id: cardId, field_id: fieldId, value, updated_at: new Date().toISOString() },
+          { onConflict: "card_id,field_id" },
+        );
+      if (error) throw toDatabaseError(error);
+    },
+    [supabase],
+  );
+
+  const commentsFor = useCallback(
+    (cardId: string) => comments.filter((c) => c.card_id === cardId),
+    [comments],
+  );
+
+  const addComment = useCallback(
+    async (cardId: string, body: string, mentions: string[]) => {
+      if (!user) return;
+      const card = lists.flatMap((l) => l.cards).find((c) => c.id === cardId);
+      const { error } = await supabase.from("card_comments").insert({
+        card_id: cardId,
+        board_id: boardId,
+        author_id: user.id,
+        body: body.trim(),
+        mentions,
+      });
+      if (error) throw toDatabaseError(error);
+      await logActivity(cardId, "comment", card ? `Comentó en "${card.title}"` : "Comentó");
+      // Notifica a los mencionados (excepto el autor).
+      const targets = mentions.filter((id) => id !== user.id);
+      if (targets.length > 0) {
+        await supabase.from("notifications").insert(
+          targets.map((userId) => ({
+            user_id: userId,
+            board_id: boardId,
+            type: "mention",
+            title: "Te mencionaron",
+            body: body.trim().slice(0, 140),
+            metadata: { card_id: cardId },
+          })),
+        );
+      }
+      await refetch();
+    },
+    [supabase, boardId, user, lists, logActivity, refetch],
+  );
+
+  const deleteComment = useCallback(
+    async (id: string) => {
+      const { error } = await supabase.from("card_comments").delete().eq("id", id);
+      if (error) throw toDatabaseError(error);
+      await refetch();
+    },
+    [supabase, refetch],
+  );
+
+  const activityFor = useCallback(
+    (cardId: string) => activity.filter((a) => a.card_id === cardId),
+    [activity],
+  );
+
+  const saveAsTemplate = useCallback(async () => {
+    if (!board || !user) return;
+    const newBoardId = crypto.randomUUID();
+    const { error } = await supabase.from("boards").insert({
+      id: newBoardId,
+      title: `${board.title} (plantilla)`,
+      description: board.description,
+      owner_id: user.id,
+      is_template: true,
+    });
+    if (error) throw toDatabaseError(error);
+    // Copia listas.
+    const listIdMap = new Map<string, string>();
+    for (const list of lists) {
+      const newListId = crypto.randomUUID();
+      listIdMap.set(list.id, newListId);
+      await supabase.from("lists").insert({
+        id: newListId,
+        board_id: newBoardId,
+        title: list.title,
+        color: list.color,
+        position: list.position,
+      });
+    }
+    // Copia etiquetas.
+    const labelIdMap = new Map<string, string>();
+    for (const label of labels) {
+      const newLabelId = crypto.randomUUID();
+      labelIdMap.set(label.id, newLabelId);
+      await supabase.from("labels").insert({
+        id: newLabelId,
+        board_id: newBoardId,
+        name: label.name,
+        color: label.color,
+      });
+    }
+    // Copia campos personalizados.
+    for (const field of fields) {
+      await supabase.from("board_fields").insert({
+        board_id: newBoardId,
+        name: field.name,
+        field_type: field.field_type,
+        options: field.options,
+        position: field.position,
+      });
+    }
+    // Copia tarjetas (sin fechas ni responsables; es una plantilla).
+    for (const list of lists) {
+      for (const card of list.cards) {
+        const newCardId = crypto.randomUUID();
+        await supabase.from("cards").insert({
+          id: newCardId,
+          board_id: newBoardId,
+          list_id: listIdMap.get(list.id)!,
+          title: card.title,
+          description: card.description,
+          position: card.position,
+          created_by: user.id,
+        });
+        const labelLinks = card.card_labels
+          .map((cl) => labelIdMap.get(cl.label_id))
+          .filter((id): id is string => Boolean(id));
+        if (labelLinks.length > 0) {
+          await supabase
+            .from("card_labels")
+            .insert(labelLinks.map((labelId) => ({ card_id: newCardId, label_id: labelId })));
+        }
+      }
+    }
+  }, [supabase, board, user, lists, labels, fields]);
+
   const value = useMemo<BoardContextValue>(
     () => ({
       boardId,
@@ -832,6 +1127,16 @@ export function BoardProvider({
       removeMember,
       cancelInvitation,
       togglePause,
+      fields,
+      createField,
+      updateField,
+      deleteField,
+      setCardFieldValue,
+      commentsFor,
+      addComment,
+      deleteComment,
+      activityFor,
+      saveAsTemplate,
     }),
     [
       boardId,
@@ -878,6 +1183,16 @@ export function BoardProvider({
       removeMember,
       cancelInvitation,
       togglePause,
+      fields,
+      createField,
+      updateField,
+      deleteField,
+      setCardFieldValue,
+      commentsFor,
+      addComment,
+      deleteComment,
+      activityFor,
+      saveAsTemplate,
     ],
   );
 

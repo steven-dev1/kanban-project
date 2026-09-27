@@ -21,6 +21,49 @@ function typeLabel(column: ParsedColumn) {
   return column.data_type ?? "";
 }
 
+function referenceLabel(column: ParsedColumn) {
+  if (!column.references_table) return null;
+  const target = [column.references_schema, column.references_table].filter(Boolean).join(".");
+  return `${target}${column.references_column ? `(${column.references_column})` : ""}`;
+}
+
+function ColumnKeys({ column }: { column: ParsedColumn }) {
+  const reference = referenceLabel(column);
+  if (!column.is_primary_key && !column.is_unique && !reference && !column.check_expression) {
+    return <span className="text-muted-foreground">—</span>;
+  }
+  return (
+    <div className="flex flex-wrap gap-1">
+      {column.is_primary_key && (
+        <span className="rounded bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-amber-600 dark:text-amber-400">
+          PK
+        </span>
+      )}
+      {column.is_unique && (
+        <span className="rounded bg-sky-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-sky-600 dark:text-sky-400">
+          UNIQUE
+        </span>
+      )}
+      {reference && (
+        <span
+          title={`REFERENCES ${reference}`}
+          className="rounded bg-violet-500/15 px-1.5 py-0.5 font-mono text-[10px] font-semibold text-violet-600 dark:text-violet-400"
+        >
+          FK → {reference}
+        </span>
+      )}
+      {column.check_expression && (
+        <span
+          title={column.check_expression}
+          className="max-w-[200px] truncate rounded bg-emerald-500/15 px-1.5 py-0.5 font-mono text-[10px] font-semibold text-emerald-600 dark:text-emerald-400"
+        >
+          CHECK {column.check_expression}
+        </span>
+      )}
+    </div>
+  );
+}
+
 export function ImportDdlDialog({
   open,
   onClose,
@@ -74,6 +117,12 @@ export function ImportDdlDialog({
           nullable: column.nullable,
           column_order: column.column_order,
           description: column.description,
+          is_primary_key: column.is_primary_key,
+          is_unique: column.is_unique,
+          references_schema: column.references_schema,
+          references_table: column.references_table,
+          references_column: column.references_column,
+          check_expression: column.check_expression,
         });
       }
 
@@ -138,6 +187,7 @@ export function ImportDdlDialog({
                     <th className="px-3 py-2">Columna</th>
                     <th className="px-3 py-2">Tipo</th>
                     <th className="px-3 py-2">Nullable</th>
+                    <th className="px-3 py-2">Claves</th>
                     <th className="px-3 py-2">Descripción</th>
                   </tr>
                 </thead>
@@ -149,6 +199,9 @@ export function ImportDdlDialog({
                       <td className="px-3 py-1.5 text-muted-foreground">{typeLabel(column)}</td>
                       <td className="px-3 py-1.5 text-muted-foreground">
                         {column.nullable ? "Sí" : "No"}
+                      </td>
+                      <td className="px-3 py-1.5">
+                        <ColumnKeys column={column} />
                       </td>
                       <td className="px-3 py-1.5 text-muted-foreground">
                         {column.description || "—"}

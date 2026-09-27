@@ -145,23 +145,23 @@ export function VersionComparator({ versions }: { versions: OracleCodeVersion[] 
           Selecciona dos versiones diferentes.
         </p>
       ) : view === "unified" ? (
-        <div className="max-h-[70vh] overflow-auto rounded-xl border border-border bg-[#0b1020] font-mono text-[12.5px] leading-5">
+        <div className="max-h-[70vh] overflow-auto rounded-xl border border-border bg-slate-50 font-mono text-[12.5px] leading-5 dark:bg-[#0b1020]">
           <pre className="m-0 min-w-full p-0">
             <code className="block">
               {result.lines.map((line, index) => {
                 const styles =
                   line.type === "added"
-                    ? "bg-green-500/10 text-green-300"
+                    ? "bg-green-500/10 text-green-700 dark:text-green-300"
                     : line.type === "removed"
-                      ? "bg-red-500/10 text-red-300"
-                      : "text-slate-300";
+                      ? "bg-red-500/10 text-red-700 dark:text-red-300"
+                      : "text-slate-700 dark:text-slate-300";
                 const marker = line.type === "added" ? "+" : line.type === "removed" ? "-" : " ";
                 return (
                   <span key={index} className={`flex min-w-max ${styles}`}>
-                    <span className="w-10 shrink-0 select-none border-r border-white/10 px-2 text-right text-slate-600">
+                    <span className="w-10 shrink-0 select-none border-r border-slate-200 px-2 text-right text-slate-400 dark:border-white/10 dark:text-slate-600">
                       {line.oldNumber ?? ""}
                     </span>
-                    <span className="w-10 shrink-0 select-none border-r border-white/10 px-2 text-right text-slate-600">
+                    <span className="w-10 shrink-0 select-none border-r border-slate-200 px-2 text-right text-slate-400 dark:border-white/10 dark:text-slate-600">
                       {line.newNumber ?? ""}
                     </span>
                     <span className="w-6 shrink-0 select-none px-1 text-center">{marker}</span>
@@ -173,7 +173,7 @@ export function VersionComparator({ versions }: { versions: OracleCodeVersion[] 
           </pre>
         </div>
       ) : (
-        <div className="flex overflow-hidden rounded-xl border border-border bg-[#0b1020]">
+        <div className="flex overflow-hidden rounded-xl border border-border bg-slate-50 dark:bg-[#0b1020]">
           <SplitPane side="left" version={left} rows={result.rows} />
           <SplitPane side="right" version={right} rows={result.rows} />
         </div>
@@ -195,15 +195,17 @@ function SplitPane({
     <div
       className={cn(
         "flex w-1/2 min-w-0 flex-col",
-        side === "right" && "border-l border-white/10",
+        side === "right" && "border-l border-slate-200 dark:border-white/10",
       )}
     >
-      <div className="flex shrink-0 items-center gap-2 border-b border-white/10 bg-white/[0.03] px-2 py-1 text-[10px] text-slate-300">
+      <div className="flex shrink-0 items-center gap-2 border-b border-slate-200 bg-slate-100 px-2 py-1 text-[10px] text-slate-600 dark:border-white/10 dark:bg-white/[0.03] dark:text-slate-300">
         <span className="font-mono">{version ? `v${version.version_number}` : ""}</span>
         {version?.environment && (
-          <span className="rounded bg-white/10 px-1 py-0.5">{version.environment}</span>
+          <span className="rounded bg-slate-200 px-1 py-0.5 dark:bg-white/10">
+            {version.environment}
+          </span>
         )}
-        <span className="ml-auto text-slate-500">{rows.length} líneas</span>
+        <span className="ml-auto text-slate-400 dark:text-slate-500">{rows.length} líneas</span>
       </div>
       <div className="max-h-[70vh] overflow-auto">
         <table className="border-collapse font-mono text-[12.5px] leading-5">
@@ -225,10 +227,14 @@ function SplitPane({
                 >
                   <td
                     className={cn(
-                      "sticky left-0 w-10 min-w-[2.5rem] select-none border-r border-white/10 px-2 text-right align-top tabular-nums",
-                      isRemoved ? "bg-[#2a0f14] text-red-300/60" : "",
-                      isAdded ? "bg-[#0f2417] text-green-300/60" : "",
-                      !isRemoved && !isAdded ? "bg-[#0b1020] text-slate-600" : "",
+                      "sticky left-0 w-10 min-w-[2.5rem] select-none border-r border-slate-200 px-2 text-right align-top tabular-nums dark:border-white/10",
+                      isRemoved ? "bg-red-100 text-red-500 dark:bg-[#2a0f14] dark:text-red-300/60" : "",
+                      isAdded
+                        ? "bg-green-100 text-green-600 dark:bg-[#0f2417] dark:text-green-300/60"
+                        : "",
+                      !isRemoved && !isAdded
+                        ? "bg-slate-50 text-slate-400 dark:bg-[#0b1020] dark:text-slate-600"
+                        : "",
                     )}
                   >
                     {number ?? ""}
@@ -236,9 +242,9 @@ function SplitPane({
                   <td
                     className={cn(
                       "whitespace-pre px-2 pr-6 align-top",
-                      isRemoved && "text-red-300",
-                      isAdded && "text-green-300",
-                      !isRemoved && !isAdded && "text-slate-300",
+                      isRemoved && "text-red-700 dark:text-red-300",
+                      isAdded && "text-green-700 dark:text-green-300",
+                      !isRemoved && !isAdded && "text-slate-700 dark:text-slate-300",
                     )}
                   >
                     {line ? line.text || "\u00a0" : "\u00a0"}

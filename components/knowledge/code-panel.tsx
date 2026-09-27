@@ -7,16 +7,28 @@ import { EnvironmentBadge, Field } from "@/components/knowledge/ui";
 import { VersionComparator } from "@/components/knowledge/version-comparator";
 import { SyntaxReport, useValidation } from "@/components/knowledge/syntax-report";
 import { Button } from "@/components/ui/button";
+import { useConfirm } from "@/components/ui/confirm";
 import { Input } from "@/components/ui/input";
 import { Modal } from "@/components/ui/modal";
 import { Select } from "@/components/ui/select";
 import { useToast } from "@/components/ui/toast";
 import { ENVIRONMENTS, ENVIRONMENT_LABELS } from "@/lib/knowledge/constants";
 import { objectCodeFileName } from "@/lib/knowledge/format";
-import type { Environment, OracleCodeVersion, SourceType } from "@/lib/types";
-import { formatDate } from "@/lib/utils";
+import type { Environment, OracleCodeVersion, OracleObjectType, SourceType } from "@/lib/types";
+import { parseArguments } from "@/lib/knowledge/parse-plsql";
+import { cn, formatDate } from "@/lib/utils";
 import { useKnowledge } from "@/providers/knowledge-provider";
-import { GitCompareArrows, Plus } from "lucide-react";
+import {
+  ChevronLeft,
+  ChevronRight,
+  CopyPlus,
+  GitCompareArrows,
+  History,
+  Plus,
+  RotateCcw,
+  Trash2,
+} from "lucide-react";
+import { diffLines, diffStats } from "@/lib/knowledge/diff";
 import { useMemo, useState } from "react";
 
 export function CodePanel({
@@ -26,6 +38,9 @@ export function CodePanel({
   versions,
   canEdit,
   emptyLabel,
+  allVersions = [],
+  onCopied,
+  objectType,
 }: {
   objectId: string;
   objectName: string;
@@ -33,9 +48,20 @@ export function CodePanel({
   versions: OracleCodeVersion[];
   canEdit: boolean;
   emptyLabel: string;
+  /** Todas las versiones sin filtrar, para copiar desde otro ambiente. */
+  allVersions?: OracleCodeVersion[];
+  onCopied?: () => void;
+  /** Tipo de objeto, para detectar argumentos al guardar código SOURCE. */
+  objectType?: OracleObjectType | null;
 }) {
-  const { addCodeVersion, updateCodeVersion, profiles } = useKnowledge();
+  const { addCodeVersion, updateCodeVersion, deleteCodeVersion, upsertEnvironment, syncArguments, profiles, isAdmin } =
+    useKnowledge();
+  const confirm = useConfirm();
   const { toast } = useToast();
+  const [copying, setCopying] = useState(false);
+  const [copyOpen, setCopyOpen] = useState(false);
+  const [copyFrom, setCopyFrom] = useState<Environment | "">("");
+  const [copyTargets, setCopyTargets] = useState<Environment[]>([]);
 
   const sorted = useMemo(
     () => [...versions].sort((a, b) => b.created_at.localeCompare(a.created_at)),
@@ -44,9 +70,147 @@ export function CodePanel({
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [compare, setCompare] = useState(false);
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(true);
 
   const selected = sorted.find((v) => v.id === selectedId) ?? sorted[0] ?? null;
   const selectedEnv = selected?.environment ?? "DEV";
+
+  // Versión inmediatamente anterior de la misma fuente y ambiente.
+  const previousOf = (version: OracleCodeVersion): OracleCodeVersion | null =>
+    [...versions]
+      .filter(
+        (v) =>
+          v.id !== version.id &&
+          v.source_type === version.source_type &&
+          v.environment === version.environment &&
+          v.created_at < version.created_at,
+      )
+      .sort((a, b) => b.created_at.localeCompare(a.created_at))[0] ?? null;
+
+  const quickDiff = (version: OracleCodeVersion) => {
+    const prev = previousOf(version);
+    if (!prev) {
+      toast("Es la primera versión: no hay con qué comparar", "error");
+      return;
+    }
+    const stats = diffStats(diffLines(prev.source_code, version.source_code));
+    toast(
+      `${prev.version_number} → ${version.version_number}: +${stats.added} · -${stats.removed} · ~${stats.modified}`,
+      "success",
+    );
+  };
+
+  const restore = async (version: OracleCodeVersion) => {
+    const ok = await confirm({
+      title: "Restaurar versión",
+      message: `Se creará una nueva versión a partir de v${version.version_number}. ¿Continuar?`,
+      confirmLabel: "Restaurar",
+    });
+    if (!ok) return;
+    try {
+      const next = (() => {
+        const envVersions = versions.filter(
+          (v) => v.source_type === version.source_type && v.environment === version.environment,
+        );
+        const max = envVersions.reduce((acc, v) => Math.max(acc, Number(v.version_number) || 0), 0);
+        return String(max + 1);
+      })();
+      await addCodeVersion(objectId, {
+        version_number: next,
+        source_type: version.source_type,
+        source_code: version.source_code,
+        environment: version.environment ?? selectedEnv,
+        change_description: `Restaurada desde v${version.version_number}`,
+      });
+      toast(`Restaurada como v${next}`);
+    } catch (error) {
+      toast(error instanceof Error ? error.message : "No se pudo restaurar", "error");
+    }
+  };
+
+  const removeVersion = async (version: OracleCodeVersion) => {
+    const ok = await confirm({
+      title: "Eliminar versión",
+      message: `¿Eliminar permanentemente la versión v${version.version_number}?`,
+      confirmLabel: "Eliminar",
+      danger: true,
+    });
+    if (!ok) return;
+    try {
+      await deleteCodeVersion(version.id);
+      if (selectedId === version.id) setSelectedId(null);
+      toast("Versión eliminada");
+    } catch (error) {
+      toast(error instanceof Error ? error.message : "No se pudo eliminar", "error");
+    }
+  };
+
+  const envsWithCode = useMemo(
+    () =>
+      ENVIRONMENTS.filter((env) =>
+        allVersions.some((v) => v.source_type === sourceType && v.environment === env),
+      ),
+    [allVersions, sourceType],
+  );
+
+  const latestForEnv = (env: Environment) =>
+    [...allVersions]
+      .filter((v) => v.source_type === sourceType && v.environment === env)
+      .sort((a, b) => a.created_at.localeCompare(b.created_at))
+      .slice(-1)[0] ?? null;
+
+  const copyCode = async () => {
+    if (!copyFrom || copyTargets.length === 0) return;
+    const source = latestForEnv(copyFrom);
+    if (!source) return;
+    setCopying(true);
+    try {
+      for (const target of copyTargets) {
+        if (target === copyFrom) continue;
+        // No duplicar si ya existe una versión idéntica en el destino.
+        const existing = allVersions.some(
+          (v) =>
+            v.source_type === sourceType &&
+            v.environment === target &&
+            v.source_code.trim() === source.source_code.trim(),
+        );
+        const nextNumber = (() => {
+          const envVersions = allVersions.filter(
+            (v) => v.source_type === sourceType && v.environment === target,
+          );
+          const max = envVersions.reduce(
+            (acc, v) => Math.max(acc, Number(v.version_number) || 0),
+            0,
+          );
+          return String(max + 1);
+        })();
+        if (!existing) {
+          await addCodeVersion(objectId, {
+            version_number: nextNumber,
+            source_type: sourceType,
+            source_code: source.source_code,
+            environment: target,
+            change_description: `Copiada desde ${copyFrom}`,
+          });
+        }
+        // Registra también la existencia del objeto en el destino.
+        await upsertEnvironment(objectId, target, {
+          version: nextNumber,
+          status: "ACTIVE",
+          notes: null,
+          last_verified_at: new Date().toISOString(),
+        });
+      }
+      toast(`Código copiado a ${copyTargets.join(", ")}`);
+      setCopyOpen(false);
+      setCopyTargets([]);
+      onCopied?.();
+    } catch (error) {
+      toast(error instanceof Error ? error.message : "No se pudo copiar", "error");
+    } finally {
+      setCopying(false);
+    }
+  };
 
   const exportActions: ExportAction[] = selected
     ? [
@@ -77,6 +241,19 @@ export function CodePanel({
               {compare ? "Ver código" : "Comparar versiones"}
             </Button>
           )}
+          {canEdit && envsWithCode.length > 0 && (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => {
+                setCopyFrom(envsWithCode[0]);
+                setCopyTargets([]);
+                setCopyOpen((v) => !v);
+              }}
+            >
+              <CopyPlus className="h-3.5 w-3.5" /> Copiar desde ambiente
+            </Button>
+          )}
           {canEdit && (
             <Button size="sm" onClick={() => setDialogOpen(true)}>
               <Plus className="h-3.5 w-3.5" /> Nueva versión
@@ -85,6 +262,51 @@ export function CodePanel({
         </div>
       </div>
 
+      {copyOpen && (
+        <div className="flex flex-wrap items-end gap-2 rounded-lg border border-border bg-muted/30 p-3">
+          <div className="w-44">
+            <Field label="Copiar desde">
+              <Select
+                value={copyFrom}
+                onChange={(v) => setCopyFrom(v as Environment)}
+                options={envsWithCode.map((env) => ({ value: env, label: env }))}
+              />
+            </Field>
+          </div>
+          <div className="flex-1">
+            <Field label="Copiar a (uno o varios)">
+              <div className="flex flex-wrap gap-1.5">
+                {ENVIRONMENTS.filter((env) => env !== copyFrom).map((env) => {
+                  const active = copyTargets.includes(env);
+                  return (
+                    <button
+                      key={env}
+                      type="button"
+                      onClick={() =>
+                        setCopyTargets((prev) =>
+                          prev.includes(env) ? prev.filter((e) => e !== env) : [...prev, env],
+                        )
+                      }
+                      className={cn(
+                        "rounded-full border px-2.5 py-1 text-xs transition-colors",
+                        active
+                          ? "border-primary bg-primary/10 text-primary"
+                          : "border-border text-muted-foreground hover:bg-muted",
+                      )}
+                    >
+                      {env}
+                    </button>
+                  );
+                })}
+              </div>
+            </Field>
+          </div>
+          <Button size="sm" onClick={copyCode} disabled={copying || copyTargets.length === 0}>
+            {copying ? "Copiando…" : "Copiar"}
+          </Button>
+        </div>
+      )}
+
       {sorted.length === 0 ? (
         <p className="rounded-lg border border-dashed border-border px-4 py-8 text-center text-xs text-muted-foreground">
           {emptyLabel}
@@ -92,11 +314,17 @@ export function CodePanel({
       ) : compare ? (
         <VersionComparator versions={versions} />
       ) : (
-        <div className="grid gap-4 lg:grid-cols-[1fr_260px]">
-          <div className="space-y-3">
+        <div
+          className={cn(
+            "grid gap-4",
+            historyOpen ? "lg:grid-cols-[1fr_260px]" : "lg:grid-cols-[1fr_auto]",
+          )}
+        >
+          <div className="min-w-0 space-y-3">
             {selected && (
               <>
                 <CodeBlock
+                  className="w-full min-w-0"
                   value={selected.source_code}
                   title={`v${selected.version_number} · ${selectedEnv}`}
                   editable={canEdit}
@@ -130,13 +358,56 @@ export function CodePanel({
           </div>
 
           <div className="space-y-2">
-            <h3 className="text-xs font-semibold uppercase text-muted-foreground">Historial</h3>
+            <button
+              type="button"
+              onClick={() => setHistoryOpen((v) => !v)}
+              className="flex w-full items-center justify-end gap-1.5 text-xs font-semibold uppercase text-muted-foreground hover:text-foreground"
+              title={historyOpen ? "Contraer historial" : "Expandir historial"}
+            >
+              {historyOpen ? (
+                <ChevronLeft className="h-3.5 w-3.5" />
+              ) : (
+                <ChevronRight className="h-3.5 w-3.5" />
+              )}
+              Historial ({sorted.length})
+            </button>
+
+            {!historyOpen && (
+              <div className="ml-auto flex w-12 flex-col items-end gap-1">
+                {sorted.map((version) => (
+                  <button
+                    key={version.id}
+                    type="button"
+                    onClick={() => setSelectedId(version.id)}
+                    title={`v${version.version_number}`}
+                    className={cn(
+                      "w-full rounded-md border py-1 font-mono text-[11px] font-semibold transition-colors",
+                      selected?.id === version.id
+                        ? "border-primary/50 bg-primary/10 text-primary"
+                        : "border-border bg-card text-muted-foreground hover:bg-muted",
+                    )}
+                  >
+                    v{version.version_number}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {historyOpen && (
             <ul className="space-y-1.5">
               {sorted.map((version) => (
                 <li key={version.id}>
-                  <button
+                  <div
+                    role="button"
+                    tabIndex={0}
                     onClick={() => setSelectedId(version.id)}
-                    className={`w-full rounded-lg border px-3 py-2 text-left text-xs transition-colors ${
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        setSelectedId(version.id);
+                      }
+                    }}
+                    className={`w-full cursor-pointer rounded-lg border px-3 py-2 text-left text-xs transition-colors focus:outline-none focus:ring-2 focus:ring-ring ${
                       selected?.id === version.id
                         ? "border-primary/50 bg-primary/5"
                         : "border-border bg-card hover:bg-muted"
@@ -167,10 +438,50 @@ export function CodePanel({
                         {version.change_description}
                       </div>
                     )}
-                  </button>
+                    <div className="mt-1.5 flex items-center gap-1">
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          quickDiff(version);
+                        }}
+                        className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] text-muted-foreground hover:bg-muted hover:text-foreground"
+                        title="Resumen de cambios vs. versión anterior"
+                      >
+                        <History className="h-3 w-3" /> Diff
+                      </button>
+                      {canEdit && (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            restore(version);
+                          }}
+                          className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] text-muted-foreground hover:bg-muted hover:text-foreground"
+                          title="Restaurar como nueva versión"
+                        >
+                          <RotateCcw className="h-3 w-3" /> Restaurar
+                        </button>
+                      )}
+                      {isAdmin && (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            removeVersion(version);
+                          }}
+                          className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] text-muted-foreground hover:text-danger"
+                          title="Eliminar versión"
+                        >
+                          <Trash2 className="h-3 w-3" />
+                        </button>
+                      )}
+                    </div>
+                  </div>
                 </li>
               ))}
             </ul>
+            )}
           </div>
         </div>
       )}
@@ -181,6 +492,16 @@ export function CodePanel({
         onClose={() => setDialogOpen(false)}
         onSubmit={async (input) => {
           await addCodeVersion(objectId, { ...input, source_type: sourceType });
+          // Detección automática de argumentos al crear una versión de código.
+          if (
+            sourceType === "SOURCE" &&
+            (objectType === "PROCEDURE" || objectType === "FUNCTION")
+          ) {
+            await syncArguments(
+              objectId,
+              parseArguments(input.source_code, objectType),
+            ).catch(() => {});
+          }
           toast("Versión creada");
         }}
         defaultCode={selected?.source_code ?? ""}

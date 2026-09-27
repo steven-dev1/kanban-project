@@ -3,9 +3,9 @@
 import { createClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
 import {
+  BarChart3,
   Bell,
   Code2,
-  Columns3,
   ChevronDown,
   FileCode2,
   GitPullRequest,
@@ -17,6 +17,7 @@ import {
   Package,
   Pause,
   Plus,
+  Search,
   Server,
   Settings,
   Sigma,
@@ -33,22 +34,50 @@ interface BoardLink {
   is_paused: boolean;
 }
 
-const KNOWLEDGE_LINKS = [
-  { href: "/knowledge", label: "Inicio", icon: Home, exact: true },
-  { href: "/knowledge/tables", label: "Tablas y vistas", icon: Table2 },
-  { href: "/knowledge/columns", label: "Columnas", icon: Columns3 },
-  { href: "/knowledge/sql", label: "Consultas SQL", icon: FileCode2 },
-  { href: "/knowledge/procedures", label: "Procedures", icon: Code2 },
-  { href: "/knowledge/functions", label: "Functions", icon: Sigma },
-  { href: "/knowledge/packages", label: "Packages", icon: Package },
-  { href: "/knowledge/favorites", label: "Favoritos", icon: Star },
-  { href: "/knowledge/recent", label: "Recientes", icon: History },
-  { href: "/knowledge/environments", label: "Ambientes", icon: Server },
-  { href: "/knowledge/pull-requests", label: "Pull Requests", icon: GitPullRequest },
-  { href: "/knowledge/history", label: "Historial", icon: History },
+interface KnowledgeLink {
+  href: string;
+  label: string;
+  icon: typeof Home;
+  exact?: boolean;
+}
+
+/**
+ * El menú de Knowledge se agrupa por intención para que sea más intuitivo:
+ * primero lo que se consulta, luego lo que se descubre (lo propio) y por
+ * último lo que se comparte.
+ */
+const KNOWLEDGE_GROUPS: { title: string; links: KnowledgeLink[] }[] = [
+  {
+    title: "Explorar",
+    links: [
+      { href: "/knowledge", label: "Resumen", icon: Home, exact: true },
+      { href: "/knowledge/tables", label: "Tablas y vistas", icon: Table2 },
+      { href: "/knowledge/procedures", label: "Procedures", icon: Code2 },
+      { href: "/knowledge/functions", label: "Functions", icon: Sigma },
+      { href: "/knowledge/packages", label: "Packages", icon: Package },
+      { href: "/knowledge/sql", label: "Consultas SQL", icon: FileCode2 },
+    ],
+  },
+  {
+    title: "Descubrir",
+    links: [
+      { href: "/knowledge/search", label: "Búsqueda global", icon: Search },
+      { href: "/knowledge/favorites", label: "Favoritos", icon: Star },
+      { href: "/knowledge/recent", label: "Recientes", icon: History },
+      { href: "/knowledge/environments", label: "Ambientes", icon: Server },
+      { href: "/knowledge/history", label: "Historial", icon: History },
+    ],
+  },
+  {
+    title: "Colaborar",
+    links: [{ href: "/knowledge/pull-requests", label: "Pull Requests", icon: GitPullRequest }],
+  },
 ];
 
+const KNOWLEDGE_LINKS: KnowledgeLink[] = KNOWLEDGE_GROUPS.flatMap((group) => group.links);
+
 const GLOBAL_LINKS = [
+  { href: "/reports", label: "Informes", icon: BarChart3 },
   { href: "/notifications", label: "Notificaciones", icon: Bell },
   { href: "/messages", label: "Mensajes", icon: MessageSquare },
   { href: "/settings", label: "Perfil y ajustes", icon: Settings },
@@ -146,25 +175,32 @@ export function Sidebar({
             />
           </button>
           {knowledgeOpen && (
-            <div className="mt-0.5 ml-3 space-y-0.5 border-l border-border pl-2">
-              {KNOWLEDGE_LINKS.map((link) => {
-                const Icon = link.icon;
-                const active = isActive(pathname, link.href, link.exact);
-                return (
-                  <Link
-                    key={link.href}
-                    href={link.href}
-                    onClick={onNavigate}
-                    className={cn(
-                      "flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-sm transition-colors hover:bg-muted",
-                      active && "bg-primary/10 text-primary",
-                    )}
-                  >
-                    <Icon className="h-3.5 w-3.5 shrink-0" />
-                    <span className="truncate">{link.label}</span>
-                  </Link>
-                );
-              })}
+            <div className="mt-0.5 ml-3 space-y-2 border-l border-border pl-2 pb-1">
+              {KNOWLEDGE_GROUPS.map((group) => (
+                <div key={group.title} className="space-y-0.5">
+                  <p className="px-2.5 pt-1 text-[10px] font-semibold tracking-wide text-muted-foreground uppercase">
+                    {group.title}
+                  </p>
+                  {group.links.map((link) => {
+                    const Icon = link.icon;
+                    const active = isActive(pathname, link.href, link.exact);
+                    return (
+                      <Link
+                        key={link.href}
+                        href={link.href}
+                        onClick={onNavigate}
+                        className={cn(
+                          "flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-sm transition-colors hover:bg-muted",
+                          active && "bg-primary/10 text-primary",
+                        )}
+                      >
+                        <Icon className="h-3.5 w-3.5 shrink-0" />
+                        <span className="truncate">{link.label}</span>
+                      </Link>
+                    );
+                  })}
+                </div>
+              ))}
             </div>
           )}
         </div>

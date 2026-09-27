@@ -337,6 +337,7 @@ export function ListColumn({ list, canEdit, onCardClick }: Props) {
 
       {canEdit && !adding && (
         <button
+          data-shortcut-new
           onClick={() => {
             setCardError(null);
             setAdding(true);

@@ -8,6 +8,8 @@ import { Modal } from "@/components/ui/modal";
 import { Select } from "@/components/ui/select";
 import { useToast } from "@/components/ui/toast";
 import { RELATION_TYPES, RELATION_TYPE_LABELS } from "@/lib/knowledge/constants";
+import { displayObjectName } from "@/lib/knowledge/format";
+import { isDuplicateError } from "@/lib/db-error";
 import type { OracleObjectWithRelations, RelationType } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { useKnowledge } from "@/providers/knowledge-provider";
@@ -161,7 +163,7 @@ function RelationRow({
         <ArrowRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
         <ObjectTypeBadge type={object.object_type} />
         <span className="truncate font-mono text-xs">
-          {object.schema_name}.{object.object_name}
+          {displayObjectName(object.schema_name, object.object_name)}
         </span>
         <span className="hidden shrink-0 text-[11px] text-muted-foreground sm:inline">
           {relationLabel}
@@ -227,11 +229,7 @@ function RelationsDialog({
       onClose();
     } catch (err) {
       const message = err instanceof Error ? err.message : "Error";
-      setError(
-        message.includes("duplicate") || message.includes("unique")
-          ? "Esa relación ya existe."
-          : message,
-      );
+      setError(isDuplicateError(err) ? "Esa relación ya existe." : message);
     } finally {
       setSaving(false);
     }
@@ -243,7 +241,7 @@ function RelationsDialog({
         <div className="rounded-lg bg-muted/50 px-3 py-2 text-xs">
           <span className="text-muted-foreground">Origen: </span>
           <span className="font-mono font-medium">
-            {object.schema_name}.{object.object_name}
+            {displayObjectName(object.schema_name, object.object_name)}
           </span>
         </div>
         <Field label="Tipo de relación">
@@ -263,7 +261,7 @@ function RelationsDialog({
             placeholder="Selecciona objeto"
             options={candidates.map((o) => ({
               value: o.id,
-              label: `${o.schema_name}.${o.object_name} (${o.object_type})`,
+              label: `${displayObjectName(o.schema_name, o.object_name)} (${o.object_type})`,
             }))}
           />
         </Field>

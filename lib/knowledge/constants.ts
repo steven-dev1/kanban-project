@@ -31,6 +31,20 @@ export const OBJECT_TYPE_LABELS: Record<OracleObjectType, string> = {
   MATERIALIZED_VIEW: "Vista materializada",
 };
 
+/** Ruta de listado a la que vuelve cada tipo de objeto. */
+export function objectListPath(type: OracleObjectType): string {
+  switch (type) {
+    case "PROCEDURE":
+      return "/knowledge/procedures";
+    case "FUNCTION":
+      return "/knowledge/functions";
+    case "PACKAGE":
+      return "/knowledge/packages";
+    default:
+      return "/knowledge/tables";
+  }
+}
+
 export const OBJECT_TYPE_COLORS: Record<OracleObjectType, string> = {
   TABLE: "#3b82f6",
   VIEW: "#14b8a6",

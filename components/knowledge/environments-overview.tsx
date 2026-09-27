@@ -2,6 +2,7 @@
 
 import { EnvironmentBadge, ObjectTypeBadge, Skeleton } from "@/components/knowledge/ui";
 import { ENVIRONMENTS, ENVIRONMENT_LABELS } from "@/lib/knowledge/constants";
+import { displayObjectName } from "@/lib/knowledge/format";
 import type { Environment, OracleObjectWithRelations } from "@/lib/types";
 import { formatDate } from "@/lib/utils";
 import { useKnowledge } from "@/providers/knowledge-provider";
@@ -156,7 +157,7 @@ export function EnvironmentsOverview() {
                     href={`/knowledge/objects/${object.id}`}
                     className="font-mono text-sm font-medium hover:text-primary"
                   >
-                    {object.schema_name}.{object.object_name}
+                    {displayObjectName(object.schema_name, object.object_name)}
                   </Link>
                 </div>
                 <div className="mt-2 flex flex-wrap gap-3">

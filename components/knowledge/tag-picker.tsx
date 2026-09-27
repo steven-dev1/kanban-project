@@ -4,6 +4,7 @@ import { TagChip } from "@/components/knowledge/ui";
 import { Dropdown, DropdownItem } from "@/components/ui/dropdown";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/components/ui/toast";
+import { isDuplicateError } from "@/lib/db-error";
 import { TAG_COLORS } from "@/lib/knowledge/constants";
 import type { KnowledgeTag } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -38,7 +39,7 @@ export function TagPicker({
       close();
     } catch (error) {
       toast(
-        error instanceof Error && error.message.includes("duplicate")
+        isDuplicateError(error)
           ? "Ya existe una etiqueta con ese nombre"
           : error instanceof Error
             ? error.message

@@ -2,6 +2,7 @@
 
 import { ObjectDialog } from "@/components/knowledge/object-dialog";
 import { ImportDdlDialog } from "@/components/knowledge/import-ddl-dialog";
+import { ImportPlsqlDialog } from "@/components/knowledge/import-plsql-dialog";
 import {
   EmptyState,
   EnvironmentBadge,
@@ -15,7 +16,8 @@ import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { useToast } from "@/components/ui/toast";
 import { ENVIRONMENTS } from "@/lib/knowledge/constants";
-import { downloadBlob, downloadTextFile } from "@/lib/knowledge/format";
+import { displayObjectName, downloadBlob, downloadTextFile } from "@/lib/knowledge/format";
+import { objectsToDdl } from "@/lib/knowledge/ddl";
 import { buildObjectsZip } from "@/lib/knowledge/export";
 import { documentationCsv, documentationMarkdown } from "@/lib/knowledge/export-docs";
 import type { OracleObjectType } from "@/lib/types";
@@ -54,13 +56,12 @@ export function ObjectsList({
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [createOpen, setCreateOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
+  const [importPlsqlOpen, setImportPlsqlOpen] = useState(false);
 
   const base = useMemo(
     () =>
       objects.filter(
-        (o) =>
-          objectTypes.includes(o.object_type) &&
-          (!favoritesOnly || o.is_favorite),
+        (o) => objectTypes.includes(o.object_type) && (!favoritesOnly || o.is_favorite),
       ),
     [objects, objectTypes, favoritesOnly],
   );
@@ -74,21 +75,22 @@ export function ObjectsList({
     [base],
   );
 
+  const normalizedQuery = query.trim().toLowerCase();
+
   const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
     const result = base.filter((o) => {
       if (schema !== ALL && o.schema_name !== schema) return false;
       if (module !== ALL && o.module !== module) return false;
       if (environment !== ALL && !o.environments.some((e) => e.environment === environment))
         return false;
       if (tagId !== ALL && !o.tags.some((t) => t.id === tagId)) return false;
-      if (!q) return true;
+      if (!normalizedQuery) return true;
       return (
-        o.object_name.toLowerCase().includes(q) ||
-        o.schema_name.toLowerCase().includes(q) ||
-        (o.description ?? "").toLowerCase().includes(q) ||
-        (o.functional_description ?? "").toLowerCase().includes(q) ||
-        o.columns.some((c) => c.column_name.toLowerCase().includes(q))
+        o.object_name.toLowerCase().includes(normalizedQuery) ||
+        o.schema_name.toLowerCase().includes(normalizedQuery) ||
+        (o.description ?? "").toLowerCase().includes(normalizedQuery) ||
+        (o.functional_description ?? "").toLowerCase().includes(normalizedQuery) ||
+        o.columns.some((c) => columnMatches(c, normalizedQuery))
       );
     });
     return result.sort((a, b) => {
@@ -96,7 +98,17 @@ export function ObjectsList({
       if (sort === "created") return b.created_at.localeCompare(a.created_at);
       return b.updated_at.localeCompare(a.updated_at);
     });
-  }, [base, query, schema, module, environment, tagId, sort]);
+  }, [base, normalizedQuery, schema, module, environment, tagId, sort]);
+
+  const matchedColumns = useMemo(() => {
+    const map = new Map<string, (typeof objects)[number]["columns"]>();
+    if (!normalizedQuery) return map;
+    for (const object of filtered) {
+      const cols = object.columns.filter((c) => columnMatches(c, normalizedQuery));
+      if (cols.length > 0) map.set(object.id, cols);
+    }
+    return map;
+  }, [filtered, normalizedQuery]);
 
   const toggleSelected = (id: string) => {
     setSelected((prev) => {
@@ -139,6 +151,19 @@ export function ObjectsList({
               {() => (
                 <div>
                   <DropdownItem
+                    onClick={() => {
+                      const ddl = objectsToDdl(filtered);
+                      if (!ddl) {
+                        toast("No hay tablas con columnas para exportar DDL", "error");
+                        return;
+                      }
+                      downloadTextFile("esquema_tablas.sql", ddl, "text/plain");
+                      toast("DDL exportado");
+                    }}
+                  >
+                    Exportar DDL (.sql)
+                  </DropdownItem>
+                  <DropdownItem
                     onClick={() =>
                       downloadTextFile(
                         "diccionario_datos.md",
@@ -174,7 +199,17 @@ export function ObjectsList({
               </Button>
             )}
             {canEdit && (
-              <Button size="sm" onClick={() => setCreateOpen(true)}>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => setImportPlsqlOpen(true)}
+                title="Pega uno o varios CREATE PROCEDURE/FUNCTION/PACKAGE"
+              >
+                <FileInput className="h-3.5 w-3.5" /> Importar PL/SQL
+              </Button>
+            )}
+            {canEdit && (
+              <Button size="sm" onClick={() => setCreateOpen(true)} data-shortcut-new>
                 <Plus className="h-3.5 w-3.5" /> Nuevo objeto
               </Button>
             )}
@@ -216,6 +251,7 @@ export function ObjectsList({
               onChange={setEnvironment}
               options={[
                 { value: ALL, label: "Todos los ambientes" },
+                // El resto filtra por "existe en este ambiente".
                 ...ENVIRONMENTS.map((env) => ({ value: env, label: env })),
               ]}
             />
@@ -316,7 +352,11 @@ export function ObjectsList({
               </thead>
               <tbody>
                 {filtered.map((object) => (
-                  <tr key={object.id} className="border-t border-border hover:bg-muted/40">
+                  <tr
+                    key={object.id}
+                    data-shortcut-row
+                    className="border-t border-border hover:bg-muted/40"
+                  >
                     <td className="px-3 py-2.5">
                       <input
                         type="checkbox"
@@ -331,7 +371,7 @@ export function ObjectsList({
                         href={`/knowledge/objects/${object.id}`}
                         className="font-mono text-xs font-medium hover:text-primary"
                       >
-                        {object.schema_name}.{object.object_name}
+                        {displayObjectName(object.schema_name, object.object_name)}
                       </Link>
                       {object.description && (
                         <p className="mt-0.5 line-clamp-1 max-w-md text-[11px] text-muted-foreground">
@@ -346,7 +386,30 @@ export function ObjectsList({
                       {object.module || "—"}
                     </td>
                     <td className="hidden px-3 py-2.5 text-xs text-muted-foreground lg:table-cell">
-                      {object.columns.length || "—"}
+                      {(() => {
+                        const cols = matchedColumns.get(object.id) ?? [];
+                        if (cols.length > 0) {
+                          return (
+                            <div className="flex flex-wrap gap-1">
+                              {cols.slice(0, 5).map((column) => (
+                                <span
+                                  key={column.id}
+                                  title={column.description ?? column.business_meaning ?? undefined}
+                                  className="rounded bg-primary/10 px-1.5 py-0.5 font-mono text-[10px] font-medium text-primary"
+                                >
+                                  <Highlight text={column.column_name} query={query.trim()} />
+                                </span>
+                              ))}
+                              {cols.length > 5 && (
+                                <span className="self-center text-[10px] text-muted-foreground">
+                                  +{cols.length - 5}
+                                </span>
+                              )}
+                            </div>
+                          );
+                        }
+                        return object.columns.length || "—";
+                      })()}
                     </td>
                     <td className="hidden px-3 py-2.5 xl:table-cell">
                       <div className="flex flex-wrap gap-1">
@@ -435,6 +498,45 @@ export function ObjectsList({
         defaultType={defaultType ?? objectTypes[0]}
         onImported={(object) => setSelected(new Set([object.id]))}
       />
+
+      <ImportPlsqlDialog
+        key={importPlsqlOpen ? "import-plsql-open" : "import-plsql-closed"}
+        open={importPlsqlOpen}
+        onClose={() => setImportPlsqlOpen(false)}
+      />
     </div>
+  );
+}
+
+interface SearchableColumn {
+  column_name: string;
+  description?: string | null;
+  business_meaning?: string | null;
+  notes?: string | null;
+}
+
+function columnMatches(column: SearchableColumn, query: string) {
+  const q = query.toLowerCase();
+  return (
+    column.column_name.toLowerCase().includes(q) ||
+    (column.description ?? "").toLowerCase().includes(q) ||
+    (column.business_meaning ?? "").toLowerCase().includes(q) ||
+    (column.notes ?? "").toLowerCase().includes(q)
+  );
+}
+
+function Highlight({ text, query }: { text: string; query: string }) {
+  const q = query.trim().toLowerCase();
+  if (!q) return <>{text}</>;
+  const index = text.toLowerCase().indexOf(q);
+  if (index === -1) return <>{text}</>;
+  return (
+    <>
+      {text.slice(0, index)}
+      <mark className="rounded bg-amber-300/70 px-0.5 text-inherit dark:bg-amber-400/30">
+        {text.slice(index, index + q.length)}
+      </mark>
+      {text.slice(index + q.length)}
+    </>
   );
 }

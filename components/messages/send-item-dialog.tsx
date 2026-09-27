@@ -6,6 +6,7 @@ import { Modal } from "@/components/ui/modal";
 import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/input";
 import { useToast } from "@/components/ui/toast";
+import { toDatabaseError } from "@/lib/db-error";
 import { createClient } from "@/lib/supabase/client";
 import type { Profile, SharedItem } from "@/lib/types";
 import { useAuth } from "@/providers/auth-provider";
@@ -64,7 +65,7 @@ export function SendItemDialog({
         item_label: itemLabel,
         message: message.trim() || null,
       });
-      if (insertError) throw new Error(insertError.message);
+      if (insertError) throw toDatabaseError(insertError);
       toast("Objeto enviado");
       setMessage("");
       setRecipient("");

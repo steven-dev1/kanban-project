@@ -14,6 +14,7 @@ import {
   OBJECT_TYPE_LABELS,
   OBJECT_TYPES,
 } from "@/lib/knowledge/constants";
+import { guessObjectTypeFromName, parseArguments, parsePlsqlDdl } from "@/lib/knowledge/parse-plsql";
 import type { Environment, OracleObject, OracleObjectType } from "@/lib/types";
 import { useKnowledge } from "@/providers/knowledge-provider";
 import { useState } from "react";
@@ -35,7 +36,8 @@ export function ObjectDialog({
   lockType?: boolean;
   onCreated?: (object: OracleObject) => void;
 }) {
-  const { createObject, updateObject, addCodeVersion, profiles } = useKnowledge();
+  const { createObject, updateObject, addCodeVersion, upsertEnvironment, syncArguments, profiles } =
+    useKnowledge();
   const { toast } = useToast();
   const editing = !!object;
 
@@ -50,7 +52,7 @@ export function ObjectDialog({
   const [module, setModule] = useState(object?.module ?? "");
   const [owner, setOwner] = useState(object?.owner ?? NONE);
   const [notes, setNotes] = useState(object?.notes ?? "");
-  const [environment, setEnvironment] = useState<Environment>("DEV");
+  const [environment, setEnvironment] = useState<Environment>("PRODUCTIVO");
   const [code, setCode] = useState("");
   const [specCode, setSpecCode] = useState("");
   const [bodyCode, setBodyCode] = useState("");
@@ -68,6 +70,46 @@ export function ObjectDialog({
     (isRoutine && code.trim() !== "" && codeValidation.errors.length > 0) ||
     (isPackage && specCode.trim() !== "" && specValidation.errors.length > 0) ||
     (isPackage && bodyCode.trim() !== "" && bodyValidation.errors.length > 0);
+
+  const pasteSource = (raw: string) => {
+    const parsed = parsePlsqlDdl(raw);
+    if (!parsed.object_name) {
+      toast("No se pudo detectar el nombre en el código", "error");
+      return;
+    }
+    if (parsed.schema_name) setSchemaName(parsed.schema_name);
+    setObjectName(parsed.object_name);
+    if (parsed.object_type) setObjectType(parsed.object_type);
+    if (parsed.object_type === "PACKAGE") {
+      if (parsed.specification) setSpecCode(parsed.specification);
+      if (parsed.body) setBodyCode(parsed.body);
+    } else {
+      setCode(raw);
+    }
+    setError(null);
+  };
+
+  const applyTemplate = (type: "PROCEDURE" | "FUNCTION" | "PACKAGE") => {
+    if (type === "PROCEDURE") {
+      const name = objectName || "P_MI_PROCEDIMIENTO";
+      setCode(
+        `CREATE OR REPLACE PROCEDURE ${name} (\n  P_EMPRESA IN NUMBER\n) IS\nBEGIN\n  NULL;\nEND ${name};\n`,
+      );
+    } else if (type === "FUNCTION") {
+      const name = objectName || "F_MI_FUNCION";
+      setCode(
+        `CREATE OR REPLACE FUNCTION ${name} (\n  P_EMPRESA IN NUMBER\n) RETURN NUMBER IS\n  V_RESULTADO NUMBER;\nBEGIN\n  RETURN V_RESULTADO;\nEND ${name};\n`,
+      );
+    } else {
+      const name = objectName || "PKG_MI_PAQUETE";
+      setSpecCode(
+        `CREATE OR REPLACE PACKAGE ${name} AS\n  PROCEDURE P_EJECUTAR(P_EMPRESA IN NUMBER);\nEND ${name};\n`,
+      );
+      setBodyCode(
+        `CREATE OR REPLACE PACKAGE BODY ${name} IS\n  PROCEDURE P_EJECUTAR(P_EMPRESA IN NUMBER) IS\n  BEGIN\n    NULL;\n  END P_EJECUTAR;\nEND ${name};\n`,
+      );
+    }
+  };
 
   const submit = async () => {
     setError(null);
@@ -107,6 +149,24 @@ export function ObjectDialog({
         if (bodyCode.trim()) codes.push({ source_type: "BODY", value: bodyCode });
       }
 
+      // El objeto se crea en un único ambiente (el elegido): registramos su
+      // existencia y, si hay código, la versión 1 solo en ese ambiente.
+      try {
+        await upsertEnvironment(created.id, environment, {
+          version: codes.length > 0 ? "1" : null,
+          status: "ACTIVE",
+          notes: null,
+          last_verified_at: new Date().toISOString(),
+        });
+      } catch (envError) {
+        toast(
+          `Objeto creado, pero no se registró en ${environment}: ${
+            envError instanceof Error ? envError.message : "error"
+          }`,
+          "error",
+        );
+      }
+
       for (const entry of codes) {
         try {
           await addCodeVersion(created.id, {
@@ -126,7 +186,17 @@ export function ObjectDialog({
         }
       }
 
-      toast(codes.length > 0 ? "Objeto y código creados" : "Objeto creado");
+      // Detección automática de argumentos para procedures/funciones.
+      const routineSource = isRoutine ? code : isPackage ? (specCode || bodyCode) : "";
+      if (routineSource.trim() && (objectType === "PROCEDURE" || objectType === "FUNCTION")) {
+        try {
+          await syncArguments(created.id, parseArguments(routineSource, objectType));
+        } catch {
+          // Silencioso: los argumentos se pueden completar a mano.
+        }
+      }
+
+      toast(codes.length > 0 ? `Objeto y código creados en ${environment}` : `Objeto creado en ${environment}`);
       onCreated?.(created);
       onClose();
     } catch (err) {
@@ -149,6 +219,93 @@ export function ObjectDialog({
       size={isRoutine || isPackage ? "xl" : "lg"}
     >
       <div className="space-y-4">
+        {/* 1) Pegado + detección de sintaxis + plantilla */}
+        {!editing && (
+          <div className="space-y-2 rounded-lg border border-dashed border-border bg-muted/30 p-3">
+            <p className="text-xs font-medium text-muted-foreground">
+              Pega el código y detecto tipo, nombre y schema automáticamente
+            </p>
+            <Textarea
+              rows={3}
+              placeholder="CREATE OR REPLACE PROCEDURE SP6DF.P_TIQUETE (...) IS ... END;"
+              onChange={(e) => {
+                const value = e.target.value;
+                if (!value.trim()) return;
+                const parsed = parsePlsqlDdl(value);
+                if (parsed.object_name) pasteSource(value);
+                else {
+                  const guess = guessObjectTypeFromName(value.split(/[\s(]/)[0]);
+                  if (guess) setObjectType(guess);
+                }
+              }}
+              className="font-mono text-xs"
+            />
+            <div className="flex flex-wrap items-center gap-2">
+              {(objectType === "PROCEDURE" ||
+                objectType === "FUNCTION" ||
+                objectType === "PACKAGE") && (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={() => applyTemplate(objectType as "PROCEDURE")}
+                >
+                  Usar plantilla de {OBJECT_TYPE_LABELS[objectType]}
+                </Button>
+              )}
+              <span className="text-[11px] text-muted-foreground">
+                También se detecta por prefijo: P_/SP_ (procedure), F_/FN_ (función), PKG_ (package).
+              </span>
+            </div>
+          </div>
+        )}
+
+        {/* 2) El código en sí (protagonista) */}
+        {isRoutine && (
+          <>
+            <Field
+              label="Código"
+              hint="Opcional. Si lo escribes se guarda como versión 1 (validado)."
+            >
+              <CodeEditor
+                value={code}
+                onChange={setCode}
+                minLines={12}
+                maxHeight={360}
+                placeholder="CREATE OR REPLACE PROCEDURE P_EMP (P_EMPRESA IN NUMBER) IS ... BEGIN ... END P_EMP;"
+              />
+            </Field>
+            {code.trim() && <SyntaxReport result={codeValidation} />}
+          </>
+        )}
+
+        {isPackage && (
+          <>
+            <Field label="Specification (encabezado)" hint="Opcional. Se guarda como versión 1.">
+              <CodeEditor
+                value={specCode}
+                onChange={setSpecCode}
+                minLines={10}
+                maxHeight={320}
+                placeholder="CREATE OR REPLACE PACKAGE PKG_TIQUETES AS ... END PKG_TIQUETES;"
+              />
+            </Field>
+            {specCode.trim() && <SyntaxReport result={specValidation} />}
+
+            <Field label="Body" hint="Opcional. Se guarda como versión 1.">
+              <CodeEditor
+                value={bodyCode}
+                onChange={setBodyCode}
+                minLines={12}
+                maxHeight={360}
+                placeholder="CREATE OR REPLACE PACKAGE BODY PKG_TIQUETES IS ... BEGIN ... END PKG_TIQUETES;"
+              />
+            </Field>
+            {bodyCode.trim() && <SyntaxReport result={bodyValidation} />}
+          </>
+        )}
+
+        {/* 3) Datos de identificación y clasificación */}
         <div className="grid gap-4 sm:grid-cols-2">
           <Field label="Schema *">
             <Input
@@ -174,6 +331,19 @@ export function ObjectDialog({
               options={OBJECT_TYPES.map((type) => ({
                 value: type,
                 label: `${type} · ${OBJECT_TYPE_LABELS[type]}`,
+              }))}
+            />
+          </Field>
+        )}
+
+        {(isRoutine || isPackage) && (
+          <Field label="Ambiente del código" hint="Se guardará como versión 1.">
+            <Select
+              value={environment}
+              onChange={(value) => setEnvironment(value as Environment)}
+              options={ENVIRONMENTS.map((env) => ({
+                value: env,
+                label: `${env} · ${ENVIRONMENT_LABELS[env]}`,
               }))}
             />
           </Field>
@@ -231,63 +401,6 @@ export function ObjectDialog({
               placeholder="Notas libres"
             />
           </Field>
-        )}
-
-        {(isRoutine || isPackage) && (
-          <Field label="Ambiente del código" hint="Se guardará como versión 1.">
-            <Select
-              value={environment}
-              onChange={(value) => setEnvironment(value as Environment)}
-              options={ENVIRONMENTS.map((env) => ({
-                value: env,
-                label: `${env} · ${ENVIRONMENT_LABELS[env]}`,
-              }))}
-            />
-          </Field>
-        )}
-
-        {isRoutine && (
-          <>
-            <Field
-              label="Código"
-              hint="Opcional. Si lo escribes se guarda como versión 1 (validado)."
-            >
-              <CodeEditor
-                value={code}
-                onChange={setCode}
-                minLines={12}
-                maxHeight={360}
-                placeholder="CREATE OR REPLACE PROCEDURE P_EMP (P_EMPRESA IN NUMBER) IS ... BEGIN ... END P_EMP;"
-              />
-            </Field>
-            {code.trim() && <SyntaxReport result={codeValidation} />}
-          </>
-        )}
-
-        {isPackage && (
-          <>
-            <Field label="Specification (encabezado)" hint="Opcional. Se guarda como versión 1.">
-              <CodeEditor
-                value={specCode}
-                onChange={setSpecCode}
-                minLines={10}
-                maxHeight={320}
-                placeholder="CREATE OR REPLACE PACKAGE PKG_TIQUETES AS ... END PKG_TIQUETES;"
-              />
-            </Field>
-            {specCode.trim() && <SyntaxReport result={specValidation} />}
-
-            <Field label="Body" hint="Opcional. Se guarda como versión 1.">
-              <CodeEditor
-                value={bodyCode}
-                onChange={setBodyCode}
-                minLines={12}
-                maxHeight={360}
-                placeholder="CREATE OR REPLACE PACKAGE BODY PKG_TIQUETES IS ... BEGIN ... END PKG_TIQUETES;"
-              />
-            </Field>
-            {bodyCode.trim() && <SyntaxReport result={bodyValidation} />}
-          </>
         )}
 
         {error && (

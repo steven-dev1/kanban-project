@@ -30,6 +30,7 @@ export function KnowledgeTopbar() {
           onChange={(e) => setQuery(e.target.value)}
           placeholder="Buscar en todo el conocimiento técnico…"
           className="h-8 pl-8 text-xs"
+          data-shortcut-search
         />
       </form>
     </div>

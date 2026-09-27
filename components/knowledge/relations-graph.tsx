@@ -1,5 +1,6 @@
 "use client";
 
+import { displayObjectName } from "@/lib/knowledge/format";
 import type { OracleObjectWithRelations } from "@/lib/types";
 
 const NODE_W = 190;
@@ -42,7 +43,10 @@ export function RelationsGraph({ object }: { object: OracleObjectWithRelations }
   outgoing.forEach((relation, index) => {
     nodes.push({
       id: relation.target_object.id,
-      label: `${relation.target_object.schema_name}.${relation.target_object.object_name}`,
+      label: displayObjectName(
+        relation.target_object.schema_name,
+        relation.target_object.object_name,
+      ),
       type: relation.target_object.object_type,
       x: width - NODE_W - 20,
       y: 40 + index * 78,
@@ -52,7 +56,7 @@ export function RelationsGraph({ object }: { object: OracleObjectWithRelations }
   const center = {
     x: width / 2 - NODE_W / 2,
     y: centerY - NODE_H / 2,
-    label: `${object.schema_name}.${object.object_name}`,
+    label: displayObjectName(object.schema_name, object.object_name),
   };
 
   return (

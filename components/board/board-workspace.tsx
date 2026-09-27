@@ -1,11 +1,14 @@
 "use client";
 
 import { ArchivePanel } from "@/components/board/archive-panel";
+import { BoardFieldsDialog } from "@/components/board/board-fields-dialog";
+import { CalendarView } from "@/components/board/calendar-view";
 import { CardDialog } from "@/components/board/card-dialog";
 import { ChartsView } from "@/components/board/charts-view";
 import { KanbanView } from "@/components/board/kanban-view";
 import { MembersDialog } from "@/components/board/members-dialog";
 import { TableView } from "@/components/board/table-view";
+import { TimelineView } from "@/components/board/timeline-view";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/components/ui/toast";
 import { cn } from "@/lib/utils";
@@ -14,26 +17,46 @@ import {
   AlertTriangle,
   Archive,
   BarChart3,
+  CalendarDays,
+  GanttChartSquare,
   KanbanSquare,
+  ListChecks,
   Lock,
   Pause,
   Play,
+  Save,
   Table2,
   Users,
 } from "lucide-react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { useState } from "react";
 
-type View = "kanban" | "table" | "charts";
+type View = "kanban" | "table" | "charts" | "calendar" | "timeline";
 
 export function BoardWorkspace() {
-  const { board, loading, loadError, isAdmin, togglePause, archivedCards, archivedLists } =
-    useBoard();
+  const {
+    board,
+    loading,
+    loadError,
+    isAdmin,
+    togglePause,
+    archivedCards,
+    archivedLists,
+    saveAsTemplate,
+  } = useBoard();
   const { toast } = useToast();
-  const [view, setView] = useState<View>("kanban");
-  const [cardId, setCardId] = useState<string | null>(null);
+  const searchParams = useSearchParams();
+  const validViews: View[] = ["kanban", "table", "charts", "calendar", "timeline"];
+  // Enlace profundo: /boards/{id}?card={cardId}&view={vista}.
+  const [view, setView] = useState<View>(() => {
+    const deepView = searchParams.get("view") as View | null;
+    return deepView && validViews.includes(deepView) ? deepView : "kanban";
+  });
+  const [cardId, setCardId] = useState<string | null>(() => searchParams.get("card"));
   const [membersOpen, setMembersOpen] = useState(false);
   const [archiveOpen, setArchiveOpen] = useState(false);
+  const [fieldsOpen, setFieldsOpen] = useState(false);
 
   if (loading) {
     return (
@@ -72,6 +95,8 @@ export function BoardWorkspace() {
   const views: { id: View; label: string; icon: typeof KanbanSquare }[] = [
     { id: "kanban", label: "Kanban", icon: KanbanSquare },
     { id: "table", label: "Tabla", icon: Table2 },
+    { id: "calendar", label: "Calendario", icon: CalendarDays },
+    { id: "timeline", label: "Timeline", icon: GanttChartSquare },
     { id: "charts", label: "Gráficos", icon: BarChart3 },
   ];
 
@@ -117,6 +142,32 @@ export function BoardWorkspace() {
             <Users className="h-4 w-4" />
             <span className="hidden sm:inline">Miembros</span>
           </Button>
+
+          {isAdmin && (
+            <Button variant="outline" size="sm" onClick={() => setFieldsOpen(true)}>
+              <ListChecks className="h-4 w-4" />
+              <span className="hidden sm:inline">Campos</span>
+            </Button>
+          )}
+
+          {isAdmin && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={async () => {
+                try {
+                  await saveAsTemplate();
+                  toast("Plantilla guardada en Mis tableros");
+                } catch (err) {
+                  toast(err instanceof Error ? err.message : "No se pudo guardar", "error");
+                }
+              }}
+              title="Guardar este tablero como plantilla reutilizable"
+            >
+              <Save className="h-4 w-4" />
+              <span className="hidden sm:inline">Plantilla</span>
+            </Button>
+          )}
 
           <Button variant="outline" size="sm" onClick={() => setArchiveOpen(true)}>
             <Archive className="h-4 w-4" />
@@ -174,12 +225,15 @@ export function BoardWorkspace() {
       <div className="min-h-0 flex-1">
         {view === "kanban" && <KanbanView onCardClick={(c) => setCardId(c.id)} />}
         {view === "table" && <TableView onCardClick={(c) => setCardId(c.id)} />}
+        {view === "calendar" && <CalendarView onCardClick={(c) => setCardId(c.id)} />}
+        {view === "timeline" && <TimelineView onCardClick={(c) => setCardId(c.id)} />}
         {view === "charts" && <ChartsView />}
       </div>
 
       <CardDialog cardId={cardId} onClose={() => setCardId(null)} />
       <MembersDialog open={membersOpen} onClose={() => setMembersOpen(false)} />
       <ArchivePanel open={archiveOpen} onClose={() => setArchiveOpen(false)} />
+      <BoardFieldsDialog open={fieldsOpen} onClose={() => setFieldsOpen(false)} />
     </div>
   );
 }

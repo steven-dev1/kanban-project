@@ -1,6 +1,8 @@
 "use client";
 
 import { CardChecklist } from "@/components/board/card-checklist";
+import { CardComments } from "@/components/board/card-comments";
+import { CardFields } from "@/components/board/card-fields";
 import { RichTextEditor } from "@/components/board/rich-text-editor";
 import { Button } from "@/components/ui/button";
 import { useConfirm } from "@/components/ui/confirm";
@@ -19,6 +21,7 @@ import {
   CheckCircle2,
   Copy,
   Download,
+  Link2,
   Loader2,
   Paperclip,
   Plus,
@@ -155,7 +158,30 @@ export function CardDialog({
   }
 
   return (
-    <Modal open={!!cardId} onClose={onClose} size="lg" title="Detalle de la card">
+    <Modal
+      open={!!cardId}
+      onClose={onClose}
+      size="lg"
+      title={
+        <span className="flex items-center gap-2">
+          Detalle de la card
+          <button
+            type="button"
+            onClick={() => {
+              const url = `${window.location.origin}${window.location.pathname}?card=${card.id}`;
+              navigator.clipboard?.writeText(url).then(
+                () => toast("Enlace copiado"),
+                () => toast("No se pudo copiar el enlace", "error"),
+              );
+            }}
+            className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+            title="Copiar enlace a esta tarjeta"
+          >
+            <Link2 className="h-4 w-4" />
+          </button>
+        </span>
+      }
+    >
       <div className="flex flex-col gap-5">
         <input
           value={title}
@@ -254,6 +280,17 @@ export function CardDialog({
 
             <div className="flex flex-col gap-1.5">
               <label className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+                <Calendar className="h-3.5 w-3.5" /> Fecha de inicio
+              </label>
+              <DatePicker
+                value={card.start_date}
+                disabled={!canEdit}
+                onChange={(iso) => updateCard(card.id, { start_date: iso })}
+              />
+            </div>
+
+            <div className="flex flex-col gap-1.5">
+              <label className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
                 <Calendar className="h-3.5 w-3.5" /> Fecha límite
               </label>
               <DatePicker
@@ -280,6 +317,8 @@ export function CardDialog({
         </div>
 
         <CardChecklist card={card} canEdit={canEdit} />
+
+        <CardFields card={card} canEdit={canEdit} />
 
         <div className="grid grid-cols-1 gap-5 border-t border-border pt-5 sm:grid-cols-2">
           <div className="flex flex-col gap-2">
@@ -381,6 +420,8 @@ export function CardDialog({
             </div>
           </div>
         </div>
+
+        <CardComments card={card} canEdit={canEdit} />
 
         <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border pt-4">
           {actionError && (

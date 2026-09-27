@@ -1,6 +1,7 @@
 "use client";
 
 import { ObjectTypeBadge, SectionTitle, Skeleton } from "@/components/knowledge/ui";
+import { displayObjectName } from "@/lib/knowledge/format";
 import { formatDate } from "@/lib/utils";
 import { useKnowledge } from "@/providers/knowledge-provider";
 import Link from "next/link";
@@ -54,7 +55,7 @@ export function FavoritesView() {
                   >
                     <ObjectTypeBadge type={object.object_type} />
                     <span className="min-w-0 flex-1 truncate font-mono text-xs">
-                      {object.schema_name}.{object.object_name}
+                      {displayObjectName(object.schema_name, object.object_name)}
                     </span>
                     <span className="shrink-0 text-[10px] text-muted-foreground">
                       {formatDate(object.updated_at)}

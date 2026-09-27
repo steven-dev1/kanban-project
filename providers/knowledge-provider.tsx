@@ -1,5 +1,7 @@
 "use client";
 
+import { duplicateObjectMessage, toDatabaseError } from "@/lib/db-error";
+import type { ParsedArgument } from "@/lib/knowledge/parse-plsql";
 import { createClient } from "@/lib/supabase/client";
 import type {
   Environment,
@@ -61,6 +63,12 @@ export interface NewColumnInput {
   description?: string | null;
   business_meaning?: string | null;
   notes?: string | null;
+  is_primary_key?: boolean;
+  is_unique?: boolean;
+  references_schema?: string | null;
+  references_table?: string | null;
+  references_column?: string | null;
+  check_expression?: string | null;
 }
 
 export interface NewColumnValueInput {
@@ -101,6 +109,7 @@ export interface NewSnippetInput {
   database_type: SqlSnippet["database_type"];
   schema_name?: string | null;
   environment?: Environment | null;
+  folder?: string | null;
   notes?: string | null;
   warnings?: string | null;
 }
@@ -163,6 +172,8 @@ interface KnowledgeContextValue {
   addArgument: (objectId: string, input: NewArgumentInput) => Promise<void>;
   updateArgument: (id: string, patch: Partial<OracleArgument>) => Promise<void>;
   deleteArgument: (id: string) => Promise<void>;
+  /** Sincroniza los argumentos detectados en el código, respetando descripciones. */
+  syncArguments: (objectId: string, detected: ParsedArgument[]) => Promise<void>;
   addRelation: (input: NewRelationInput) => Promise<void>;
   deleteRelation: (id: string) => Promise<void>;
   createTag: (name: string, color: string) => Promise<KnowledgeTag | null>;
@@ -178,6 +189,9 @@ interface KnowledgeContextValue {
   deleteSnippetParameter: (id: string) => Promise<void>;
   addSnippetObject: (snippetId: string, objectId: string) => Promise<void>;
   removeSnippetObject: (snippetId: string, objectId: string) => Promise<void>;
+  renameFolder: (from: string, to: string) => Promise<void>;
+  deleteFolder: (folder: string) => Promise<void>;
+  moveSnippetsToFolder: (snippetIds: string[], folder: string | null) => Promise<void>;
 }
 
 const KnowledgeContext = createContext<KnowledgeContextValue | null>(null);
@@ -304,7 +318,7 @@ export function KnowledgeProvider({ children }: { children: ReactNode }) {
       pullRequestsRes,
     ].find((r) => r.error)?.error;
 
-    setLoadError(firstError ? firstError.message : null);
+    setLoadError(firstError ? toDatabaseError(firstError).message : null);
 
     setData({
       objects: (objectsRes.data as OracleObject[]) ?? [],
@@ -447,11 +461,13 @@ export function KnowledgeProvider({ children }: { children: ReactNode }) {
 
   const createObject = useCallback(
     async (input: NewObjectInput) => {
+      const schemaName = input.schema_name.trim().toUpperCase();
+      const objectName = input.object_name.trim().toUpperCase();
       const { data: created, error } = await supabase
         .from("oracle_objects")
         .insert({
-          schema_name: input.schema_name.trim().toUpperCase(),
-          object_name: input.object_name.trim().toUpperCase(),
+          schema_name: schemaName,
+          object_name: objectName,
           object_type: input.object_type,
           description: input.description ?? null,
           functional_description: input.functional_description ?? null,
@@ -464,7 +480,10 @@ export function KnowledgeProvider({ children }: { children: ReactNode }) {
         })
         .select()
         .single();
-      if (error) throw new Error(error.message);
+      if (error)
+        throw toDatabaseError(error, {
+          duplicate: duplicateObjectMessage(input.object_type, `${schemaName}.${objectName}`),
+        });
       await refetch();
       return (created as OracleObject) ?? null;
     },
@@ -479,11 +498,13 @@ export function KnowledgeProvider({ children }: { children: ReactNode }) {
       const source = data.objects.find((o) => o.id === id);
       if (!source) throw new Error("Objeto no encontrado");
 
+      const newSchema = (overrides?.schema_name ?? source.schema_name).toUpperCase();
+      const newName = (overrides?.object_name ?? `${source.object_name}_COPIA`).toUpperCase();
       const { data: created, error } = await supabase
         .from("oracle_objects")
         .insert({
-          schema_name: (overrides?.schema_name ?? source.schema_name).toUpperCase(),
-          object_name: (overrides?.object_name ?? `${source.object_name}_COPIA`).toUpperCase(),
+          schema_name: newSchema,
+          object_name: newName,
           object_type: source.object_type,
           description: source.description,
           module: source.module,
@@ -495,7 +516,10 @@ export function KnowledgeProvider({ children }: { children: ReactNode }) {
         })
         .select()
         .single();
-      if (error) throw new Error(error.message);
+      if (error)
+        throw toDatabaseError(error, {
+          duplicate: duplicateObjectMessage(source.object_type, `${newSchema}.${newName}`),
+        });
       const newId = (created as OracleObject).id;
 
       // Columnas + valores
@@ -516,11 +540,17 @@ export function KnowledgeProvider({ children }: { children: ReactNode }) {
               description: c.description,
               business_meaning: c.business_meaning,
               notes: c.notes,
+              is_primary_key: c.is_primary_key,
+              is_unique: c.is_unique,
+              references_schema: c.references_schema,
+              references_table: c.references_table,
+              references_column: c.references_column,
+              check_expression: c.check_expression,
               source: c.source,
             })),
           )
           .select();
-        if (colError) throw new Error(colError.message);
+        if (colError) throw toDatabaseError(colError);
         const idByName = new Map(
           ((newColumns as OracleColumn[]) ?? []).map((c) => [c.column_name, c.id]),
         );
@@ -592,7 +622,7 @@ export function KnowledgeProvider({ children }: { children: ReactNode }) {
         .from("oracle_objects")
         .update({ ...patch, updated_by: user?.id ?? null })
         .eq("id", id);
-      if (error) throw new Error(error.message);
+      if (error) throw toDatabaseError(error);
     },
     [supabase, user],
   );
@@ -600,7 +630,7 @@ export function KnowledgeProvider({ children }: { children: ReactNode }) {
   const deleteObject = useCallback(
     async (id: string) => {
       const { error } = await supabase.from("oracle_objects").delete().eq("id", id);
-      if (error) throw new Error(error.message);
+      if (error) throw toDatabaseError(error);
       await refetch();
     },
     [supabase, refetch],
@@ -655,7 +685,7 @@ export function KnowledgeProvider({ children }: { children: ReactNode }) {
         },
         { onConflict: "object_id,environment" },
       );
-      if (error) throw new Error(error.message);
+      if (error) throw toDatabaseError(error);
       await refetch();
     },
     [supabase, user, refetch],
@@ -675,10 +705,16 @@ export function KnowledgeProvider({ children }: { children: ReactNode }) {
         description: input.description ?? null,
         business_meaning: input.business_meaning ?? null,
         notes: input.notes ?? null,
+        is_primary_key: input.is_primary_key ?? false,
+        is_unique: input.is_unique ?? false,
+        references_schema: input.references_schema ?? null,
+        references_table: input.references_table ?? null,
+        references_column: input.references_column ?? null,
+        check_expression: input.check_expression ?? null,
         created_by: user?.id ?? null,
         updated_by: user?.id ?? null,
       });
-      if (error) throw new Error(error.message);
+      if (error) throw toDatabaseError(error);
       await refetch();
     },
     [supabase, user, refetch],
@@ -694,7 +730,7 @@ export function KnowledgeProvider({ children }: { children: ReactNode }) {
         .from("oracle_columns")
         .update({ ...patch, updated_by: user?.id ?? null })
         .eq("id", id);
-      if (error) throw new Error(error.message);
+      if (error) throw toDatabaseError(error);
     },
     [supabase, user],
   );
@@ -702,7 +738,7 @@ export function KnowledgeProvider({ children }: { children: ReactNode }) {
   const deleteColumn = useCallback(
     async (id: string) => {
       const { error } = await supabase.from("oracle_columns").delete().eq("id", id);
-      if (error) throw new Error(error.message);
+      if (error) throw toDatabaseError(error);
       await refetch();
     },
     [supabase, refetch],
@@ -719,7 +755,7 @@ export function KnowledgeProvider({ children }: { children: ReactNode }) {
         created_by: user?.id ?? null,
         updated_by: user?.id ?? null,
       });
-      if (error) throw new Error(error.message);
+      if (error) throw toDatabaseError(error);
       await refetch();
     },
     [supabase, user, refetch],
@@ -735,7 +771,7 @@ export function KnowledgeProvider({ children }: { children: ReactNode }) {
         .from("oracle_column_values")
         .update({ ...patch, updated_by: user?.id ?? null })
         .eq("id", id);
-      if (error) throw new Error(error.message);
+      if (error) throw toDatabaseError(error);
     },
     [supabase, user],
   );
@@ -743,7 +779,7 @@ export function KnowledgeProvider({ children }: { children: ReactNode }) {
   const deleteColumnValue = useCallback(
     async (id: string) => {
       const { error } = await supabase.from("oracle_column_values").delete().eq("id", id);
-      if (error) throw new Error(error.message);
+      if (error) throw toDatabaseError(error);
       await refetch();
     },
     [supabase, refetch],
@@ -792,7 +828,7 @@ export function KnowledgeProvider({ children }: { children: ReactNode }) {
         change_description: input.change_description ?? null,
         created_by: user?.id ?? null,
       });
-      if (error) throw new Error(error.message);
+      if (error) throw toDatabaseError(error);
       await refetch();
     },
     [supabase, data.codeVersions, user, refetch],
@@ -813,7 +849,7 @@ export function KnowledgeProvider({ children }: { children: ReactNode }) {
         codeVersions: prev.codeVersions.map((v) => (v.id === id ? { ...v, ...patch } : v)),
       }));
       const { error } = await supabase.from("oracle_code_versions").update(patch).eq("id", id);
-      if (error) throw new Error(error.message);
+      if (error) throw toDatabaseError(error);
     },
     [supabase],
   );
@@ -821,7 +857,7 @@ export function KnowledgeProvider({ children }: { children: ReactNode }) {
   const deleteCodeVersion = useCallback(
     async (id: string) => {
       const { error } = await supabase.from("oracle_code_versions").delete().eq("id", id);
-      if (error) throw new Error(error.message);
+      if (error) throw toDatabaseError(error);
       await refetch();
     },
     [supabase, refetch],
@@ -838,7 +874,7 @@ export function KnowledgeProvider({ children }: { children: ReactNode }) {
         description: input.description ?? null,
         created_by: user?.id ?? null,
       });
-      if (error) throw new Error(error.message);
+      if (error) throw toDatabaseError(error);
       await refetch();
     },
     [supabase, user, refetch],
@@ -851,7 +887,7 @@ export function KnowledgeProvider({ children }: { children: ReactNode }) {
         arguments: prev.arguments.map((a) => (a.id === id ? { ...a, ...patch } : a)),
       }));
       const { error } = await supabase.from("oracle_arguments").update(patch).eq("id", id);
-      if (error) throw new Error(error.message);
+      if (error) throw toDatabaseError(error);
     },
     [supabase],
   );
@@ -859,10 +895,56 @@ export function KnowledgeProvider({ children }: { children: ReactNode }) {
   const deleteArgument = useCallback(
     async (id: string) => {
       const { error } = await supabase.from("oracle_arguments").delete().eq("id", id);
-      if (error) throw new Error(error.message);
+      if (error) throw toDatabaseError(error);
       await refetch();
     },
     [supabase, refetch],
+  );
+
+  const syncArguments = useCallback(
+    async (objectId: string, detected: ParsedArgument[]) => {
+      const existing = data.arguments
+        .filter((a) => a.object_id === objectId)
+        .sort((a, b) => (a.position ?? 0) - (b.position ?? 0));
+      const byName = new Map(existing.map((a) => [a.argument_name.toUpperCase(), a]));
+      const detectedNames = new Set(detected.map((d) => d.argument_name));
+
+      for (const arg of detected) {
+        const current = byName.get(arg.argument_name);
+        if (current) {
+          // Actualiza tipo/dirección/posición, conserva la descripción escrita.
+          if (
+            current.data_type !== arg.data_type ||
+            current.in_out !== arg.in_out ||
+            (current.position ?? 0) !== arg.position
+          ) {
+            await supabase
+              .from("oracle_arguments")
+              .update({ data_type: arg.data_type, in_out: arg.in_out, position: arg.position })
+              .eq("id", current.id);
+          }
+        } else {
+          await supabase.from("oracle_arguments").insert({
+            object_id: objectId,
+            argument_name: arg.argument_name,
+            data_type: arg.data_type,
+            in_out: arg.in_out,
+            position: arg.position,
+            created_by: user?.id ?? null,
+          });
+        }
+      }
+
+      // Elimina los que ya no aparecen en la firma (solo los sin descripción
+      // manual, para no perder documentación huérfana por error).
+      const obsolete = existing.filter((a) => !detectedNames.has(a.argument_name) && !a.description);
+      for (const arg of obsolete) {
+        await supabase.from("oracle_arguments").delete().eq("id", arg.id);
+      }
+
+      await refetch();
+    },
+    [supabase, data.arguments, user, refetch],
   );
 
   const addRelation = useCallback(
@@ -874,7 +956,7 @@ export function KnowledgeProvider({ children }: { children: ReactNode }) {
         description: input.description ?? null,
         created_by: user?.id ?? null,
       });
-      if (error) throw new Error(error.message);
+      if (error) throw toDatabaseError(error);
       await refetch();
     },
     [supabase, user, refetch],
@@ -883,7 +965,7 @@ export function KnowledgeProvider({ children }: { children: ReactNode }) {
   const deleteRelation = useCallback(
     async (id: string) => {
       const { error } = await supabase.from("object_relations").delete().eq("id", id);
-      if (error) throw new Error(error.message);
+      if (error) throw toDatabaseError(error);
       await refetch();
     },
     [supabase, refetch],
@@ -896,7 +978,7 @@ export function KnowledgeProvider({ children }: { children: ReactNode }) {
         .insert({ name: name.trim(), color, created_by: user?.id ?? null })
         .select()
         .single();
-      if (error) throw new Error(error.message);
+      if (error) throw toDatabaseError(error);
       await refetch();
       return (created as KnowledgeTag) ?? null;
     },
@@ -906,7 +988,7 @@ export function KnowledgeProvider({ children }: { children: ReactNode }) {
   const deleteTag = useCallback(
     async (id: string) => {
       const { error } = await supabase.from("knowledge_tags").delete().eq("id", id);
-      if (error) throw new Error(error.message);
+      if (error) throw toDatabaseError(error);
       await refetch();
     },
     [supabase, refetch],
@@ -956,6 +1038,7 @@ export function KnowledgeProvider({ children }: { children: ReactNode }) {
           database_type: input.database_type,
           schema_name: input.schema_name ?? null,
           environment: input.environment ?? null,
+          folder: input.folder ?? null,
           notes: input.notes ?? null,
           warnings: input.warnings ?? null,
           created_by: user?.id ?? null,
@@ -963,7 +1046,7 @@ export function KnowledgeProvider({ children }: { children: ReactNode }) {
         })
         .select()
         .single();
-      if (error) throw new Error(error.message);
+      if (error) throw toDatabaseError(error);
       await refetch();
       return (created as SqlSnippet) ?? null;
     },
@@ -985,6 +1068,7 @@ export function KnowledgeProvider({ children }: { children: ReactNode }) {
           database_type: source.database_type,
           schema_name: source.schema_name,
           environment: source.environment,
+          folder: source.folder,
           notes: source.notes,
           warnings: source.warnings,
           created_by: user?.id ?? null,
@@ -992,7 +1076,7 @@ export function KnowledgeProvider({ children }: { children: ReactNode }) {
         })
         .select()
         .single();
-      if (error) throw new Error(error.message);
+      if (error) throw toDatabaseError(error);
       const newId = (created as SqlSnippet).id;
 
       const params = data.parameters.filter((p) => p.snippet_id === id);
@@ -1040,7 +1124,7 @@ export function KnowledgeProvider({ children }: { children: ReactNode }) {
         .from("sql_snippets")
         .update({ ...patch, updated_by: user?.id ?? null })
         .eq("id", id);
-      if (error) throw new Error(error.message);
+      if (error) throw toDatabaseError(error);
     },
     [supabase, user],
   );
@@ -1048,7 +1132,7 @@ export function KnowledgeProvider({ children }: { children: ReactNode }) {
   const deleteSnippet = useCallback(
     async (id: string) => {
       const { error } = await supabase.from("sql_snippets").delete().eq("id", id);
-      if (error) throw new Error(error.message);
+      if (error) throw toDatabaseError(error);
       await refetch();
     },
     [supabase, refetch],
@@ -1075,7 +1159,7 @@ export function KnowledgeProvider({ children }: { children: ReactNode }) {
         example_value: input.example_value ?? null,
         required: input.required ?? false,
       });
-      if (error) throw new Error(error.message);
+      if (error) throw toDatabaseError(error);
       await refetch();
     },
     [supabase, refetch],
@@ -1084,7 +1168,7 @@ export function KnowledgeProvider({ children }: { children: ReactNode }) {
   const deleteSnippetParameter = useCallback(
     async (id: string) => {
       const { error } = await supabase.from("sql_snippet_parameters").delete().eq("id", id);
-      if (error) throw new Error(error.message);
+      if (error) throw toDatabaseError(error);
       await refetch();
     },
     [supabase, refetch],
@@ -1095,7 +1179,7 @@ export function KnowledgeProvider({ children }: { children: ReactNode }) {
       const { error } = await supabase
         .from("sql_snippet_objects")
         .insert({ snippet_id: snippetId, object_id: objectId });
-      if (error) throw new Error(error.message);
+      if (error) throw toDatabaseError(error);
       await refetch();
     },
     [supabase, refetch],
@@ -1108,10 +1192,74 @@ export function KnowledgeProvider({ children }: { children: ReactNode }) {
         .delete()
         .eq("snippet_id", snippetId)
         .eq("object_id", objectId);
-      if (error) throw new Error(error.message);
+      if (error) throw toDatabaseError(error);
       await refetch();
     },
     [supabase, refetch],
+  );
+
+  const moveSnippetsToFolder = useCallback(
+    async (snippetIds: string[], folder: string | null) => {
+      if (snippetIds.length === 0) return;
+      const normalized = folder?.trim() || null;
+      setData((prev) => ({
+        ...prev,
+        snippets: prev.snippets.map((s) =>
+          snippetIds.includes(s.id) ? { ...s, folder: normalized } : s,
+        ),
+      }));
+      const { error } = await supabase
+        .from("sql_snippets")
+        .update({ folder: normalized, updated_by: user?.id ?? null })
+        .in("id", snippetIds);
+      if (error) throw toDatabaseError(error);
+    },
+    [supabase, user],
+  );
+
+  const renameFolder = useCallback(
+    async (from: string, to: string) => {
+      const target = to.trim();
+      if (!target) throw new Error("El nombre de la carpeta es obligatorio");
+      if (target === from) return;
+
+      // Renombra la carpeta y sus subcarpetas preservando el sufijo de cada
+      // ruta (por ejemplo "Tiquetes/Cierre" -> "Tickets/Cierre").
+      const affected = new Set<string>();
+      for (const snippet of data.snippets) {
+        const current = snippet.folder;
+        if (!current) continue;
+        if (current === from || current.startsWith(`${from}/`)) {
+          affected.add(current);
+        }
+      }
+      await Promise.all(
+        [...affected].map((current) => {
+          const next = current === from ? target : `${target}${current.slice(from.length)}`;
+          return supabase
+            .from("sql_snippets")
+            .update({ folder: next, updated_by: user?.id ?? null })
+            .eq("folder", current)
+            .then((res: { error: unknown }) => {
+              if (res.error) throw toDatabaseError(res.error);
+            });
+        }),
+      );
+      await refetch();
+    },
+    [supabase, user, refetch, data.snippets],
+  );
+
+  const deleteFolder = useCallback(
+    async (folder: string) => {
+      const { error } = await supabase
+        .from("sql_snippets")
+        .update({ folder: null, updated_by: user?.id ?? null })
+        .eq("folder", folder);
+      if (error) throw toDatabaseError(error);
+      await refetch();
+    },
+    [supabase, user, refetch],
   );
 
   const createPullRequest = useCallback(
@@ -1124,7 +1272,7 @@ export function KnowledgeProvider({ children }: { children: ReactNode }) {
         status: input.status ?? "PENDING",
         notes: input.notes?.trim() || null,
       });
-      if (error) throw new Error(error.message);
+      if (error) throw toDatabaseError(error);
       await refetch();
     },
     [supabase, refetch],
@@ -1137,7 +1285,7 @@ export function KnowledgeProvider({ children }: { children: ReactNode }) {
         pullRequests: prev.pullRequests.map((p) => (p.id === id ? { ...p, ...patch } : p)),
       }));
       const { error } = await supabase.from("pull_requests").update(patch).eq("id", id);
-      if (error) throw new Error(error.message);
+      if (error) throw toDatabaseError(error);
     },
     [supabase],
   );
@@ -1145,7 +1293,7 @@ export function KnowledgeProvider({ children }: { children: ReactNode }) {
   const deletePullRequest = useCallback(
     async (id: string) => {
       const { error } = await supabase.from("pull_requests").delete().eq("id", id);
-      if (error) throw new Error(error.message);
+      if (error) throw toDatabaseError(error);
       await refetch();
     },
     [supabase, refetch],
@@ -1181,6 +1329,7 @@ export function KnowledgeProvider({ children }: { children: ReactNode }) {
       addArgument,
       updateArgument,
       deleteArgument,
+      syncArguments,
       addRelation,
       deleteRelation,
       createTag,
@@ -1196,6 +1345,9 @@ export function KnowledgeProvider({ children }: { children: ReactNode }) {
       deleteSnippetParameter,
       addSnippetObject,
       removeSnippetObject,
+      renameFolder,
+      deleteFolder,
+      moveSnippetsToFolder,
       createPullRequest,
       updatePullRequest,
       deletePullRequest,
@@ -1229,6 +1381,7 @@ export function KnowledgeProvider({ children }: { children: ReactNode }) {
       addArgument,
       updateArgument,
       deleteArgument,
+      syncArguments,
       addRelation,
       deleteRelation,
       createTag,
@@ -1244,6 +1397,9 @@ export function KnowledgeProvider({ children }: { children: ReactNode }) {
       deleteSnippetParameter,
       addSnippetObject,
       removeSnippetObject,
+      renameFolder,
+      deleteFolder,
+      moveSnippetsToFolder,
       createPullRequest,
       updatePullRequest,
       deletePullRequest,

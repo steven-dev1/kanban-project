@@ -44,6 +44,16 @@ export function KanbanView({
     return lists.find((l) => l.cards.some((c) => c.id === cardId));
   }
 
+  function resolveListId(overId: string, data: Record<string, unknown> | undefined) {
+    if (typeof data?.listId === "string") return data.listId;
+    if (overId.startsWith("cards-")) return overId.slice("cards-".length);
+    const byCard = cardList(overId);
+    if (byCard) return byCard.id;
+    const byList = lists.find((l) => l.id === overId);
+    if (byList) return byList.id;
+    return null;
+  }
+
   function handleDragStart(event: DragStartEvent) {
     if (event.active.data.current?.type === "card") {
       const list = cardList(event.active.id as string);
@@ -78,22 +88,33 @@ export function KanbanView({
       return;
     }
 
-    const targetListId =
-      (over.data.current?.listId as string | undefined) ?? cardList(over.id as string)?.id;
+    const activeId = active.id as string;
+    const overId = over.id as string;
+    const targetListId = resolveListId(overId, over.data.current);
     if (!targetListId) return;
     const targetList = lists.find((l) => l.id === targetListId);
     if (!targetList) return;
 
-    const targetCards = targetList.cards.filter((c) => c.id !== active.id);
+    const sourceList = cardList(activeId);
+    const targetCards = targetList.cards.filter((c) => c.id !== activeId);
     let insertIndex = targetCards.length;
-    if (over.data.current?.type === "card") {
-      const oi = targetCards.findIndex((c) => c.id === over.id);
-      if (oi !== -1) insertIndex = oi;
+    const overCardIndex = targetCards.findIndex((c) => c.id === overId);
+    if (overCardIndex !== -1) {
+      insertIndex = overCardIndex;
+      // En la misma lista, si la tarjeta baja debe insertarse después del
+      // destino; si sube, antes. Sin esto la card "regresa" a su lugar.
+      if (sourceList?.id === targetList.id) {
+        const activeOriginal = sourceList.cards.findIndex((c) => c.id === activeId);
+        const overOriginal = sourceList.cards.findIndex((c) => c.id === overId);
+        if (activeOriginal !== -1 && overOriginal !== -1 && activeOriginal < overOriginal) {
+          insertIndex += 1;
+        }
+      }
     }
     const before = insertIndex > 0 ? targetCards[insertIndex - 1].position : null;
     const after =
       insertIndex < targetCards.length ? targetCards[insertIndex].position : null;
-    moveCard(active.id as string, targetListId, before, after);
+    moveCard(activeId, targetListId, before, after);
   }
 
   async function submitList() {

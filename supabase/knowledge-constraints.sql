@@ -1,32 +1,31 @@
 -- ============================================================================
--- Compartir objetos/consultas como COPIA editable
--- Ejecutar DESPUÉS de supabase/knowledge-extras2.sql. Idempotente.
+-- ORACLE KNOWLEDGE HUB — CLAVES Y RESTRICCIONES DE COLUMNA
+-- Ejecutar DESPUÉS de supabase/oracle-hub.sql, oracle-hub-private.sql y
+-- knowledge-sharing.sql. Idempotente: se puede ejecutar varias veces.
 --
--- Al recibir un envío, el destinatario decide Aceptar (se le crea una COPIA
--- propia y editable) o Rechazar. La copia se hace en el servidor (SECURITY
--- DEFINER) para respetar el modelo privado sin exponer los datos del emisor.
+-- Permite documentar, por columna: si es PRIMARY KEY, si es UNIQUE, su clave
+-- foránea (REFERENCES schema.tabla.columna) y una expresión CHECK.
 -- ============================================================================
 
--- ---------------------------------------------------------------------------
--- Estado del envío
--- ---------------------------------------------------------------------------
+alter table public.oracle_columns
+  add column if not exists is_primary_key boolean not null default false;
+alter table public.oracle_columns
+  add column if not exists is_unique boolean not null default false;
+alter table public.oracle_columns
+  add column if not exists references_schema text;
+alter table public.oracle_columns
+  add column if not exists references_table text;
+alter table public.oracle_columns
+  add column if not exists references_column text;
+alter table public.oracle_columns
+  add column if not exists check_expression text;
 
-alter table public.shared_items
-  add column if not exists status text not null default 'PENDING';
-alter table public.shared_items
-  add column if not exists accepted_item_id uuid;
-
-do $$
-begin
-  if not exists (select 1 from pg_constraint where conname = 'shared_items_status_check') then
-    alter table public.shared_items
-      add constraint shared_items_status_check
-      check (status in ('PENDING','ACCEPTED','REJECTED'));
-  end if;
-end $$;
+create index if not exists idx_columns_primary_key
+  on public.oracle_columns(object_id) where is_primary_key;
 
 -- ---------------------------------------------------------------------------
--- Aceptar: crea una copia propia y devuelve el id de la copia
+-- Copia de objetos compartidos: conservar las claves documentadas.
+-- (Misma función que knowledge-sharing.sql, extendida con las nuevas columnas.)
 -- ---------------------------------------------------------------------------
 
 create or replace function public.accept_shared_item(p_id uuid)
@@ -180,26 +179,4 @@ begin
   return v_new_id;
 end $$;
 
--- ---------------------------------------------------------------------------
--- Rechazar
--- ---------------------------------------------------------------------------
-
-create or replace function public.decline_shared_item(p_id uuid)
-returns void language plpgsql security definer set search_path = public as $$
-declare
-  v_uid uuid := auth.uid();
-  v_share public.shared_items;
-begin
-  if v_uid is null then raise exception 'Not authenticated'; end if;
-  select * into v_share from public.shared_items where id = p_id;
-  if v_share is null then return; end if;
-  if v_share.recipient_id <> v_uid then raise exception 'No autorizado'; end if;
-
-  update public.shared_items set status = 'REJECTED', is_read = true where id = p_id;
-  update public.notifications
-    set is_read = true
-    where user_id = v_uid and metadata->>'shared_item_id' = p_id::text;
-end $$;
-
 grant execute on function public.accept_shared_item(uuid) to authenticated;
-grant execute on function public.decline_shared_item(uuid) to authenticated;

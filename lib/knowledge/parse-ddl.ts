@@ -7,6 +7,12 @@ export interface ParsedColumn {
   nullable: boolean;
   column_order: number;
   description: string | null;
+  is_primary_key: boolean;
+  is_unique: boolean;
+  references_schema: string | null;
+  references_table: string | null;
+  references_column: string | null;
+  check_expression: string | null;
 }
 
 export interface ParsedDdl {
@@ -167,7 +173,12 @@ function parseColumn(definition: string): ParsedColumn | null {
   }
   rest = typeWords.join(" ");
 
-  const nullable = !/\bNOT\s+NULL\b/i.test(nameMatch[2]);
+  const tail = nameMatch[2];
+  const is_primary_key = /\bPRIMARY\s+KEY\b/i.test(tail);
+  const is_unique = /\bUNIQUE\b/i.test(tail);
+  const reference = parseReference(tail);
+  const checkMatch = tail.match(/\bCHECK\s*\(([\s\S]*)\)/i);
+  const nullable = is_primary_key ? false : !/\bNOT\s+NULL\b/i.test(tail);
   const type = parseType(rest.replace(/,\s*$/, "").trim());
 
   return {
@@ -176,7 +187,89 @@ function parseColumn(definition: string): ParsedColumn | null {
     nullable,
     column_order: 0,
     description,
+    is_primary_key,
+    is_unique,
+    references_schema: reference?.schema ?? null,
+    references_table: reference?.table ?? null,
+    references_column: reference?.column ?? null,
+    check_expression: checkMatch ? checkMatch[1].trim() : null,
   };
+}
+
+function stripQuotes(raw: string): string {
+  return raw.trim().replace(/^"|"$/g, "").replace(/'/g, "").toUpperCase();
+}
+
+/** Extrae el destino de una cláusula REFERENCES [schema.]tabla[(columna)]. */
+function parseReference(
+  text: string,
+): { schema: string | null; table: string; column: string | null } | null {
+  const match = text.match(
+    /\bREFERENCES\s+(?:"?([A-Za-z0-9_$#]+)"?\s*\.\s*)?"?([A-Za-z0-9_$#]+)"?\s*(?:\(\s*"?([A-Za-z0-9_$#]+)"?\s*\))?/i,
+  );
+  if (!match) return null;
+  return {
+    schema: match[1] ? match[1].toUpperCase() : null,
+    table: match[2].toUpperCase(),
+    column: match[3] ? match[3].toUpperCase() : null,
+  };
+}
+
+/** Aplica una restricción definida a nivel de tabla (PRIMARY, UNIQUE, FK, CHECK). */
+function applyTableConstraint(part: string, columns: ParsedColumn[]): boolean {
+  const body = part.trim().replace(/^CONSTRAINT\s+"?[A-Za-z0-9_$#]+"?\s+/i, "");
+  const find = (name: string) => columns.find((c) => c.column_name === name);
+
+  const pk = body.match(/^PRIMARY\s+KEY\s*\(([^)]*)\)/i);
+  if (pk) {
+    for (const raw of pk[1].split(",")) {
+      const column = find(stripQuotes(raw));
+      if (column) {
+        column.is_primary_key = true;
+        column.nullable = false;
+      }
+    }
+    return true;
+  }
+
+  const unique = body.match(/^(?:UNIQUE|KEY)\s*\(([^)]*)\)/i);
+  if (unique) {
+    for (const raw of unique[1].split(",")) {
+      const column = find(stripQuotes(raw));
+      if (column) column.is_unique = true;
+    }
+    return true;
+  }
+
+  const fk = body.match(
+    /^FOREIGN\s+KEY\s*\(([^)]*)\)\s*REFERENCES\s+(?:"?([A-Za-z0-9_$#]+)"?\s*\.\s*)?"?([A-Za-z0-9_$#]+)"?\s*(?:\(([^)]*)\))?/i,
+  );
+  if (fk) {
+    const localColumns = fk[1].split(",").map(stripQuotes);
+    const refSchema = fk[2] ? fk[2].toUpperCase() : null;
+    const refTable = fk[3].toUpperCase();
+    const refColumns = (fk[4] ?? "").split(",").map(stripQuotes);
+    localColumns.forEach((name, index) => {
+      const column = find(name);
+      if (column) {
+        column.references_schema = refSchema;
+        column.references_table = refTable;
+        column.references_column = refColumns[index] ?? refColumns[0] ?? null;
+      }
+    });
+    return true;
+  }
+
+  const check = body.match(/^CHECK\s*\(([\s\S]*)\)/i);
+  if (check) {
+    const expression = check[1].trim();
+    const referenced = expression.match(/"?([A-Za-z0-9_$#]+)"?/);
+    const column = referenced ? find(referenced[1].toUpperCase()) : undefined;
+    if (column) column.check_expression = expression;
+    return true;
+  }
+
+  return false;
 }
 
 /**
@@ -233,13 +326,21 @@ export function parseTableDdl(sql: string): ParsedDdl {
   }
 
   const columns: ParsedColumn[] = [];
+  const constraintParts: string[] = [];
   for (const part of splitTopLevel(body.body)) {
     const column = parseColumn(part);
     if (column) {
       columns.push({ ...column, column_order: columns.length + 1 });
-    } else if (!CONSTRAINTS.test(part)) {
+    } else if (CONSTRAINTS.test(part)) {
+      constraintParts.push(part);
+    } else {
       warnings.push(`No se pudo interpretar: ${part.slice(0, 60)}`);
     }
+  }
+
+  // Las restricciones a nivel de tabla pueden ir antes o después de las columnas.
+  for (const part of constraintParts) {
+    applyTableConstraint(part, columns);
   }
 
   if (columns.length === 0) {

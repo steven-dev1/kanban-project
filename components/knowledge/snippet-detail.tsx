@@ -11,7 +11,7 @@ import { useConfirm } from "@/components/ui/confirm";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { useToast } from "@/components/ui/toast";
-import { snippetFileName } from "@/lib/knowledge/format";
+import { displayObjectName, snippetFileName } from "@/lib/knowledge/format";
 import { recordRecent } from "@/lib/knowledge/recent";
 import { useKnowledge } from "@/providers/knowledge-provider";
 import { AlertTriangle, ArrowLeft, CopyPlus, Download, Pencil, Plus, Send, Star, Trash2, X } from "lucide-react";
@@ -366,7 +366,7 @@ export function SnippetDetail({ snippetId }: { snippetId: string }) {
                     >
                       <ObjectTypeBadge type={object.object_type} />
                       <span className="truncate font-mono">
-                        {object.schema_name}.{object.object_name}
+                        {displayObjectName(object.schema_name, object.object_name)}
                       </span>
                     </Link>
                     {isAdmin && (
@@ -397,7 +397,7 @@ export function SnippetDetail({ snippetId }: { snippetId: string }) {
                       placeholder="Selecciona objeto"
                       options={linkCandidates.map((o) => ({
                         value: o.id,
-                        label: `${o.schema_name}.${o.object_name} (${o.object_type})`,
+                        label: `${displayObjectName(o.schema_name, o.object_name)} (${o.object_type})`,
                       }))}
                     />
                   </Field>

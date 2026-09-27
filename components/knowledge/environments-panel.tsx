@@ -6,6 +6,7 @@ import { Input, Textarea } from "@/components/ui/input";
 import { Modal } from "@/components/ui/modal";
 import { Select } from "@/components/ui/select";
 import { useToast } from "@/components/ui/toast";
+import { VersionComparator } from "@/components/knowledge/version-comparator";
 import {
   ENVIRONMENT_LABELS,
   ENVIRONMENT_STATUSES,
@@ -15,23 +16,38 @@ import {
 import type {
   Environment,
   EnvironmentStatus,
+  OracleCodeVersion,
   OracleObjectEnvironment,
+  SourceType,
 } from "@/lib/types";
 import { formatDate } from "@/lib/utils";
 import { useKnowledge } from "@/providers/knowledge-provider";
-import { Pencil } from "lucide-react";
+import { GitCompareArrows, Pencil } from "lucide-react";
 import { useState } from "react";
 
 export function EnvironmentsPanel({
   objectId,
   environments,
+  codeVersions = [],
   canEdit,
 }: {
   objectId: string;
   environments: OracleObjectEnvironment[];
+  codeVersions?: OracleCodeVersion[];
   canEdit: boolean;
 }) {
   const [editing, setEditing] = useState<Environment | null>(null);
+  const [compareSource, setCompareSource] = useState<SourceType>("SOURCE");
+  const [comparing, setComparing] = useState(false);
+
+  // La comparación entre ambientes se hace a nivel del código más reciente de
+  // cada ambiente para el mismo tipo de fuente (SOURCE/SPECIFICATION/BODY).
+  const availableSources = Array.from(
+    new Set(codeVersions.map((v) => v.source_type)),
+  );
+  const comparableVersions = codeVersions.filter(
+    (v) => v.source_type === compareSource && v.environment,
+  );
 
   return (
     <div className="space-y-3">
@@ -80,6 +96,45 @@ export function EnvironmentsPanel({
           );
         })}
       </div>
+
+      {comparableVersions.length >= 2 && (
+        <div className="rounded-xl border border-border bg-card p-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-2">
+              <GitCompareArrows className="h-4 w-4 text-muted-foreground" />
+              <h3 className="text-xs font-semibold uppercase text-muted-foreground">
+                Comparar código entre ambientes
+              </h3>
+            </div>
+            <div className="flex items-center gap-2">
+              {availableSources.length > 1 && (
+                <div className="w-44">
+                  <Select
+                    value={compareSource}
+                    onChange={(v) => {
+                      setCompareSource(v as SourceType);
+                      setComparing(false);
+                    }}
+                    options={availableSources.map((s) => ({ value: s, label: s }))}
+                  />
+                </div>
+              )}
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => setComparing((v) => !v)}
+              >
+                {comparing ? "Ocultar" : "Comparar"}
+              </Button>
+            </div>
+          </div>
+          {comparing && (
+            <div className="mt-3">
+              <VersionComparator versions={comparableVersions} />
+            </div>
+          )}
+        </div>
+      )}
 
       <EnvironmentDialog
         key={editing ?? "none"}

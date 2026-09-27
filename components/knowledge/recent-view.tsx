@@ -1,6 +1,7 @@
 "use client";
 
 import { ObjectTypeBadge, SectionTitle, Skeleton } from "@/components/knowledge/ui";
+import { displayObjectName } from "@/lib/knowledge/format";
 import { useRecent } from "@/lib/knowledge/recent";
 import { formatDate } from "@/lib/utils";
 import { useKnowledge } from "@/providers/knowledge-provider";
@@ -15,7 +16,7 @@ export function RecentView() {
   const created = useMemo(() => {
     const objectItems = objects.map((o) => ({
       id: o.id,
-      name: `${o.schema_name}.${o.object_name}`,
+      name: displayObjectName(o.schema_name, o.object_name),
       href: `/knowledge/objects/${o.id}`,
       type: o.object_type as string,
       at: o.created_at,
@@ -35,7 +36,7 @@ export function RecentView() {
   const updated = useMemo(() => {
     const objectItems = objects.map((o) => ({
       id: o.id,
-      name: `${o.schema_name}.${o.object_name}`,
+      name: displayObjectName(o.schema_name, o.object_name),
       href: `/knowledge/objects/${o.id}`,
       type: o.object_type as string,
       at: o.updated_at,

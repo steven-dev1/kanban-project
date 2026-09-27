@@ -1,3 +1,4 @@
+import { toDatabaseError } from "@/lib/db-error";
 import { sendInvitationEmail } from "@/lib/email";
 import { createClient } from "@/lib/supabase/server";
 import { NextResponse, type NextRequest } from "next/server";
@@ -36,7 +37,7 @@ export async function POST(request: NextRequest) {
   });
 
   if (error) {
-    return NextResponse.json({ error: error.message }, { status: 400 });
+    return NextResponse.json({ error: toDatabaseError(error).message }, { status: 400 });
   }
 
   const [{ data: board }, { data: profile }] = await Promise.all([

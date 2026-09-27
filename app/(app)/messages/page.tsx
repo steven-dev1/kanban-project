@@ -2,6 +2,7 @@
 
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/components/ui/toast";
+import { toDatabaseError } from "@/lib/db-error";
 import { createClient } from "@/lib/supabase/client";
 import type { Profile, SharedItem } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -81,7 +82,7 @@ export default function MessagesPage() {
     const { data, error } = await supabase.rpc("accept_shared_item", { p_id: item.id });
     setBusy(null);
     if (error) {
-      toast(error.message, "error");
+      toast(toDatabaseError(error).message, "error");
       return;
     }
     if (data) {
@@ -97,7 +98,7 @@ export default function MessagesPage() {
     setBusy(item.id);
     const { error } = await supabase.rpc("decline_shared_item", { p_id: item.id });
     setBusy(null);
-    if (error) toast(error.message, "error");
+    if (error) toast(toDatabaseError(error).message, "error");
     load();
   };
 

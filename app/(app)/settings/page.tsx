@@ -5,6 +5,7 @@ import { Field } from "@/components/knowledge/ui";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { useToast } from "@/components/ui/toast";
+import { toDatabaseError } from "@/lib/db-error";
 import { createClient } from "@/lib/supabase/client";
 import { useHydrated } from "@/lib/use-hydrated";
 import type { KnowledgeRole, Profile } from "@/lib/types";
@@ -56,7 +57,7 @@ function ProfileForm({ profile, email }: { profile: Profile; email: string | nul
         .from("profiles")
         .update({ full_name: fullName.trim() || null, avatar_url: avatarUrl.trim() || null })
         .eq("id", profile.id);
-      if (error) throw new Error(error.message);
+      if (error) throw toDatabaseError(error);
       toast("Perfil actualizado");
     } catch (error) {
       toast(error instanceof Error ? error.message : "Error", "error");

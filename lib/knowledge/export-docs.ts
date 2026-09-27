@@ -1,7 +1,19 @@
-import type { OracleObjectWithRelations } from "@/lib/types";
+import type { OracleColumnWithValues, OracleObjectWithRelations } from "@/lib/types";
 
 function typeLabel(object: OracleObjectWithRelations) {
   return object.object_type;
+}
+
+function keyLabel(column: OracleColumnWithValues): string {
+  const parts: string[] = [];
+  if (column.is_primary_key) parts.push("PK");
+  if (column.is_unique) parts.push("UNIQUE");
+  if (column.references_table) {
+    const target = [column.references_schema, column.references_table].filter(Boolean).join(".");
+    parts.push(`FK→${target}${column.references_column ? `(${column.references_column})` : ""}`);
+  }
+  if (column.check_expression) parts.push(`CHECK ${column.check_expression}`);
+  return parts.join(", ");
 }
 
 export function documentationMarkdown(objects: OracleObjectWithRelations[]): string {
@@ -18,12 +30,15 @@ export function documentationMarkdown(objects: OracleObjectWithRelations[]): str
     out.push("");
 
     if (object.columns.length) {
-      out.push("| Columna | Tipo | Nullable | Descripción |");
-      out.push("| --- | --- | --- | --- |");
+      out.push("| Columna | Tipo | Nullable | Claves | Descripción |");
+      out.push("| --- | --- | --- | --- | --- |");
       for (const column of object.columns) {
         const type = `${column.data_type ?? ""}${column.data_length ? `(${column.data_length})` : ""}`;
         const desc = (column.description ?? column.business_meaning ?? "").replace(/\|/g, "\\|");
-        out.push(`| ${column.column_name} | ${type} | ${column.nullable ? "Sí" : "No"} | ${desc} |`);
+        const keys = keyLabel(column).replace(/\|/g, "\\|") || "—";
+        out.push(
+          `| ${column.column_name} | ${type} | ${column.nullable ? "Sí" : "No"} | ${keys} | ${desc} |`,
+        );
       }
       out.push("");
     }
@@ -53,6 +68,7 @@ export function documentationCsv(objects: OracleObjectWithRelations[]): string {
     "TIPO_DATO",
     "LONGITUD",
     "NULLABLE",
+    "CLAVES",
     "DESCRIPCION",
     "VALORES",
   ];
@@ -70,6 +86,7 @@ export function documentationCsv(objects: OracleObjectWithRelations[]): string {
           object.object_name,
           object.object_type,
           object.module,
+          "",
           "",
           "",
           "",
@@ -96,6 +113,7 @@ export function documentationCsv(objects: OracleObjectWithRelations[]): string {
           column.data_type,
           column.data_length != null ? String(column.data_length) : "",
           column.nullable ? "SI" : "NO",
+          keyLabel(column),
           column.description ?? column.business_meaning,
           values,
         ]

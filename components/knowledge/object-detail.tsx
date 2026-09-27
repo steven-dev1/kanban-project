@@ -3,6 +3,7 @@
 import { ArgumentsPanel } from "@/components/knowledge/arguments-panel";
 import { CodePanel } from "@/components/knowledge/code-panel";
 import { ColumnsPanel } from "@/components/knowledge/columns-panel";
+import { DuplicateObjectDialog } from "@/components/knowledge/duplicate-object-dialog";
 import { EnvironmentsPanel } from "@/components/knowledge/environments-panel";
 import { ExportMenu, type ExportAction } from "@/components/knowledge/export-menu";
 import { ObjectDialog } from "@/components/knowledge/object-dialog";
@@ -13,10 +14,15 @@ import { EnvironmentBadge, ObjectTypeBadge, Skeleton } from "@/components/knowle
 import { Button } from "@/components/ui/button";
 import { useConfirm } from "@/components/ui/confirm";
 import { useToast } from "@/components/ui/toast";
-import { OBJECT_TYPE_LABELS } from "@/lib/knowledge/constants";
-import { ensureTrailingNewline, objectCodeFileName } from "@/lib/knowledge/format";
+import { ENVIRONMENTS, ENVIRONMENT_LABELS, OBJECT_TYPE_LABELS, objectListPath } from "@/lib/knowledge/constants";
+import { ddlFileName, objectToDdl } from "@/lib/knowledge/ddl";
+import {
+  displayObjectName,
+  ensureTrailingNewline,
+  objectCodeFileName,
+} from "@/lib/knowledge/format";
 import { recordRecent } from "@/lib/knowledge/recent";
-import type { OracleCodeVersion, SourceType } from "@/lib/types";
+import type { Environment, OracleCodeVersion, SourceType } from "@/lib/types";
 import { cn, formatDate } from "@/lib/utils";
 import { useKnowledge } from "@/providers/knowledge-provider";
 import {
@@ -28,6 +34,7 @@ import {
   GitBranch,
   Info,
   Layers,
+  Link2,
   ListTree,
   Pencil,
   Send,
@@ -35,7 +42,7 @@ import {
   Trash2,
 } from "lucide-react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 
 type TabKey = "info" | "columns" | "code" | "spec" | "body" | "args" | "environments" | "impact";
@@ -57,18 +64,27 @@ export function ObjectDetail({ objectId }: { objectId: string }) {
   const confirm = useConfirm();
   const { toast } = useToast();
   const router = useRouter();
+  const searchParams = useSearchParams();
 
   const object = objects.find((o) => o.id === objectId) ?? null;
-  const [chosenTab, setChosenTab] = useState<TabKey | null>(null);
+  // Enlace profundo: /knowledge/objects/{id}?tab=columns
+  const [chosenTab, setChosenTab] = useState<TabKey | null>(() => {
+    const deepTab = searchParams.get("tab") as TabKey | null;
+    return deepTab ?? null;
+  });
   const [editOpen, setEditOpen] = useState(false);
   const [sendOpen, setSendOpen] = useState(false);
+  const [duplicateOpen, setDuplicateOpen] = useState(false);
+  const [duplicateError, setDuplicateError] = useState<string | null>(null);
+  const [duplicating, setDuplicating] = useState(false);
+  const [activeEnv, setActiveEnv] = useState<Environment | null>(null);
 
   useEffect(() => {
     if (object) {
       recordRecent({
         kind: "object",
         id: object.id,
-        label: `${object.schema_name}.${object.object_name}`,
+        label: displayObjectName(object.schema_name, object.object_name),
         href: `/knowledge/objects/${object.id}`,
       });
     }
@@ -175,7 +191,7 @@ export function ObjectDetail({ objectId }: { objectId: string }) {
       ),
     ].filter((line) => line !== "" || true);
     const content = lines.join("\n");
-    return [
+    const actions: ExportAction[] = [
       { label: "Copiar documentación", content },
       {
         label: "Exportar documentación .txt",
@@ -183,6 +199,12 @@ export function ObjectDetail({ objectId }: { objectId: string }) {
         fileName: objectCodeFileName(label, "SOURCE", "DEV", "txt").replace(/_DEV_/, "_"),
       },
     ];
+    const ddl = objectToDdl(object);
+    if (ddl) {
+      actions.push({ label: "Copiar DDL (CREATE TABLE)", content: ddl });
+      actions.push({ label: "Exportar DDL .sql", content: ddl, fileName: ddlFileName(object) });
+    }
+    return actions;
   }, [object, latestByType]);
 
   if (loading && !object) {
@@ -205,14 +227,31 @@ export function ObjectDetail({ objectId }: { objectId: string }) {
     );
   }
 
+  const listPath = objectListPath(object.object_type);
+
   const isTableLike = object.object_type === "TABLE" || object.object_type === "VIEW";
   const isPackage = object.object_type === "PACKAGE";
   const hasCode = CODE_TYPES.has(object.object_type);
   const hasArgs = object.object_type === "PROCEDURE" || object.object_type === "FUNCTION" || isPackage;
 
-  const sourceVersions = object.code_versions.filter((v) => v.source_type === "SOURCE");
-  const specVersions = object.code_versions.filter((v) => v.source_type === "SPECIFICATION");
-  const bodyVersions = object.code_versions.filter((v) => v.source_type === "BODY");
+  // Ambientes donde el objeto existe (documentados).
+  const existingEnvironments = ENVIRONMENTS.filter((env) =>
+    object.environments.some((e) => e.environment === env),
+  );
+  // Por defecto: PRODUCTIVO si existe; si no, el primero disponible.
+  const defaultEnvironment =
+    existingEnvironments.includes("PRODUCTIVO") ? "PRODUCTIVO" : (existingEnvironments[0] ?? null);
+  const selectedEnv = activeEnv ?? defaultEnvironment;
+
+  const sourceVersions = object.code_versions.filter(
+    (v) => v.source_type === "SOURCE" && (!selectedEnv || v.environment === selectedEnv),
+  );
+  const specVersions = object.code_versions.filter(
+    (v) => v.source_type === "SPECIFICATION" && (!selectedEnv || v.environment === selectedEnv),
+  );
+  const bodyVersions = object.code_versions.filter(
+    (v) => v.source_type === "BODY" && (!selectedEnv || v.environment === selectedEnv),
+  );
 
   const tabs: { key: TabKey; label: string; icon: typeof Info }[] = [
     ...(isTableLike ? [{ key: "columns" as TabKey, label: "Columnas", icon: Columns3 }] : []),
@@ -241,7 +280,7 @@ export function ObjectDetail({ objectId }: { objectId: string }) {
   const handleDelete = async () => {
     const ok = await confirm({
       title: "Eliminar objeto",
-      message: `¿Deseas eliminar ${object.schema_name}.${object.object_name}? Esta acción eliminará la documentación asociada.`,
+      message: `¿Deseas eliminar ${displayObjectName(object.schema_name, object.object_name)}? Esta acción eliminará la documentación asociada.`,
       danger: true,
       confirmLabel: "Eliminar",
     });
@@ -249,7 +288,7 @@ export function ObjectDetail({ objectId }: { objectId: string }) {
     try {
       await deleteObject(object.id);
       toast("Objeto eliminado");
-      router.push("/knowledge/tables");
+      router.push(listPath);
     } catch (error) {
       toast(error instanceof Error ? error.message : "Error", "error");
     }
@@ -261,15 +300,15 @@ export function ObjectDetail({ objectId }: { objectId: string }) {
         <div className="flex items-center justify-between gap-3">
           <div className="flex min-w-0 items-center gap-2">
             <Link
-              href="/knowledge/tables"
+              href={listPath}
               className="shrink-0 text-muted-foreground hover:text-foreground"
-              title="Volver al diccionario"
+              title="Volver al listado"
             >
               <ArrowLeft className="h-4 w-4" />
             </Link>
             <ObjectTypeBadge type={object.object_type} />
             <h1 className="truncate font-mono text-base font-semibold">
-              {object.schema_name}.{object.object_name}
+              {displayObjectName(object.schema_name, object.object_name)}
             </h1>
             <button
               onClick={() => toggleObjectFavorite(object.id, !object.is_favorite)}
@@ -300,6 +339,20 @@ export function ObjectDetail({ objectId }: { objectId: string }) {
             <Button size="sm" variant="ghost" title="Enviar" onClick={() => setSendOpen(true)}>
               <Send className="h-4 w-4" />
             </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              title="Copiar enlace"
+              onClick={() => {
+                const url = `${window.location.origin}/knowledge/objects/${object.id}?tab=${tab}`;
+                navigator.clipboard?.writeText(url).then(
+                  () => toast("Enlace copiado"),
+                  () => toast("No se pudo copiar", "error"),
+                );
+              }}
+            >
+              <Link2 className="h-4 w-4" />
+            </Button>
             <ExportMenu
               actions={exportActions}
               trigger={
@@ -316,15 +369,10 @@ export function ObjectDetail({ objectId }: { objectId: string }) {
               <Button
                 size="sm"
                 variant="ghost"
-                title="Duplicar"
-                onClick={async () => {
-                  try {
-                    const newId = await duplicateObject(object.id);
-                    toast("Objeto duplicado");
-                    if (newId) router.push(`/knowledge/objects/${newId}`);
-                  } catch (error) {
-                    toast(error instanceof Error ? error.message : "Error", "error");
-                  }
+                title="Duplicar con variación"
+                onClick={() => {
+                  setDuplicateError(null);
+                  setDuplicateOpen(true);
                 }}
               >
                 <CopyPlus className="h-4 w-4" />
@@ -343,32 +391,74 @@ export function ObjectDetail({ objectId }: { objectId: string }) {
           </div>
         </div>
 
-        <nav className="flex gap-1 overflow-x-auto">
-          {tabs.map((item) => {
-            const Icon = item.icon;
-            return (
-              <button
-                key={item.key}
-                onClick={() => setChosenTab(item.key)}
-                className={cn(
-                  "inline-flex shrink-0 items-center gap-1.5 rounded-lg px-2.5 py-1 text-sm font-medium transition-colors",
-                  tab === item.key
-                    ? "bg-primary/10 text-primary"
-                    : "text-muted-foreground hover:bg-muted hover:text-foreground",
-                )}
-              >
-                <Icon className="h-3.5 w-3.5" />
-                {item.label}
-              </button>
-            );
-          })}
+        <nav className="flex flex-wrap items-center gap-1">
+          <div className="flex gap-1 overflow-x-auto">
+            {tabs.map((item) => {
+              const Icon = item.icon;
+              return (
+                <button
+                  key={item.key}
+                  onClick={() => setChosenTab(item.key)}
+                  className={cn(
+                    "inline-flex shrink-0 items-center gap-1.5 rounded-lg px-2.5 py-1 text-sm font-medium transition-colors",
+                    tab === item.key
+                      ? "bg-primary/10 text-primary"
+                      : "text-muted-foreground hover:bg-muted hover:text-foreground",
+                  )}
+                >
+                  <Icon className="h-3.5 w-3.5" />
+                  {item.label}
+                </button>
+              );
+            })}
+          </div>
+
+          {/* Selector de ambiente global: gobierna el código que se muestra. */}
+          {existingEnvironments.length > 0 && (
+            <div className="ml-auto flex items-center gap-1 rounded-lg border border-border bg-background p-0.5">
+              {ENVIRONMENTS.map((env) => {
+                const exists = existingEnvironments.includes(env);
+                const active = selectedEnv === env;
+                return (
+                  <button
+                    key={env}
+                    onClick={() => setActiveEnv(env)}
+                    disabled={!exists}
+                    title={exists ? ENVIRONMENT_LABELS[env] : `No existe en ${ENVIRONMENT_LABELS[env]}`}
+                    className={cn(
+                      "rounded-md px-2.5 py-1 text-xs font-medium transition-colors",
+                      active
+                        ? "bg-primary/15 text-primary"
+                        : exists
+                          ? "text-muted-foreground hover:text-foreground"
+                          : "cursor-not-allowed text-muted-foreground/40 line-through",
+                    )}
+                  >
+                    {env}
+                  </button>
+                );
+              })}
+            </div>
+          )}
         </nav>
       </header>
 
-      <div className="min-h-0 flex-1 overflow-y-auto p-3 md:p-4">
+      {selectedEnv && !existingEnvironments.includes(selectedEnv) && (
+        <div className="border-b border-amber-500/20 bg-amber-500/10 px-4 py-1.5 text-xs text-amber-700 dark:text-amber-300 md:px-6">
+          Este objeto no existe en {ENVIRONMENT_LABELS[selectedEnv]}. Puedes crear la versión aquí o
+          copiar el código desde otro ambiente.
+        </div>
+      )}
+
+      <div className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto p-3 md:p-4">
         {tab === "info" && <InfoTab object={object} profiles={profiles} />}
         {tab === "columns" && (
-          <ColumnsPanel objectId={object.id} columns={object.columns} canEdit={canEdit} />
+          <ColumnsPanel
+            objectId={object.id}
+            objectSchema={object.schema_name}
+            columns={object.columns}
+            canEdit={canEdit}
+          />
         )}
         {tab === "code" && (
           <CodePanel
@@ -376,8 +466,14 @@ export function ObjectDetail({ objectId }: { objectId: string }) {
             objectName={object.object_name}
             sourceType="SOURCE"
             versions={sourceVersions}
+                        allVersions={object.code_versions}
+                        objectType={object.object_type}
             canEdit={canEdit}
-            emptyLabel="Sin código almacenado. Crea la primera versión."
+            emptyLabel={
+              selectedEnv
+                ? `Sin código en ${ENVIRONMENT_LABELS[selectedEnv]}. Crea la primera versión o copia el código desde otro ambiente.`
+                : "Sin código almacenado. Crea la primera versión."
+            }
           />
         )}
         {tab === "spec" && (
@@ -386,6 +482,8 @@ export function ObjectDetail({ objectId }: { objectId: string }) {
             objectName={object.object_name}
             sourceType="SPECIFICATION"
             versions={specVersions}
+                        allVersions={object.code_versions}
+                        objectType={object.object_type}
             canEdit={canEdit}
             emptyLabel="Sin Package Specification almacenado."
           />
@@ -396,6 +494,8 @@ export function ObjectDetail({ objectId }: { objectId: string }) {
             objectName={object.object_name}
             sourceType="BODY"
             versions={bodyVersions}
+                        allVersions={object.code_versions}
+                        objectType={object.object_type}
             canEdit={canEdit}
             emptyLabel="Sin Package Body almacenado."
           />
@@ -407,6 +507,7 @@ export function ObjectDetail({ objectId }: { objectId: string }) {
           <EnvironmentsPanel
             objectId={object.id}
             environments={object.environments}
+            codeVersions={object.code_versions}
             canEdit={canEdit}
           />
         )}
@@ -426,7 +527,32 @@ export function ObjectDetail({ objectId }: { objectId: string }) {
         onClose={() => setSendOpen(false)}
         itemType="OBJECT"
         itemId={object.id}
-        itemLabel={`${object.schema_name}.${object.object_name}`}
+        itemLabel={displayObjectName(object.schema_name, object.object_name)}
+      />
+
+      <DuplicateObjectDialog
+        key={duplicateOpen ? "duplicate-open" : "duplicate-closed"}
+        open={duplicateOpen}
+        onClose={() => setDuplicateOpen(false)}
+        object={object}
+        defaultSchema={object.schema_name}
+        defaultName={`${object.object_name}_COPIA`}
+        saving={duplicating}
+        error={duplicateError}
+        onSubmit={async (values) => {
+          setDuplicateError(null);
+          setDuplicating(true);
+          try {
+            const newId = await duplicateObject(object.id, values);
+            toast("Objeto duplicado");
+            setDuplicateOpen(false);
+            if (newId) router.push(`/knowledge/objects/${newId}`);
+          } catch (error) {
+            setDuplicateError(error instanceof Error ? error.message : "Error");
+          } finally {
+            setDuplicating(false);
+          }
+        }}
       />
     </div>
   );

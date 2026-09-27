@@ -4,6 +4,7 @@ import { ObjectTypeBadge, Skeleton } from "@/components/knowledge/ui";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { ENVIRONMENTS } from "@/lib/knowledge/constants";
+import { displayObjectName, displaySchema } from "@/lib/knowledge/format";
 import { cn } from "@/lib/utils";
 import { useKnowledge } from "@/providers/knowledge-provider";
 import { Code2, Database, FileCode2, Hash, Search as SearchIcon, Tag as TagIcon } from "lucide-react";
@@ -154,7 +155,7 @@ export function SearchPanel({ initialQuery = "" }: { initialQuery?: string }) {
           key: `obj-${object.id}`,
           kind: object.object_type,
           name: object.object_name,
-          context: object.schema_name,
+          context: displaySchema(object.schema_name),
           description: object.description ?? object.functional_description ?? null,
           href: `/knowledge/objects/${object.id}`,
         });
@@ -173,7 +174,7 @@ export function SearchPanel({ initialQuery = "" }: { initialQuery?: string }) {
             key: `col-${column.id}`,
             kind: "COLUMN",
             name: column.column_name,
-            context: `${object.schema_name}.${object.object_name}`,
+            context: displayObjectName(object.schema_name, object.object_name),
             description: column.description ?? column.business_meaning ?? null,
             href: `/knowledge/objects/${object.id}`,
           });
@@ -212,7 +213,9 @@ export function SearchPanel({ initialQuery = "" }: { initialQuery?: string }) {
                 key: `code-${version.id}-${index}`,
                 kind: "PLSQL",
                 name: object.object_name,
-                context: `${object.schema_name} · ${version.source_type}${
+                context: `${[displaySchema(object.schema_name), version.source_type]
+                  .filter(Boolean)
+                  .join(" · ")}${
                   version.environment ? ` · ${version.environment}` : ""
                 } · v${version.version_number} · L${index + 1}`,
                 description: codeLines[index].trim().slice(0, 200),

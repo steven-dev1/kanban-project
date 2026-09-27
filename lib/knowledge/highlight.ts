@@ -69,7 +69,7 @@ const CONSTANTS = new Set([
   "dual",
 ]);
 
-const FUNCTIONS = new Set(
+export const KNOWN_FUNCTIONS = new Set(
   (
     "count sum avg min max stddev variance median " +
     "nvl nvl2 coalesce decode case ifnull nullif " +
@@ -103,7 +103,7 @@ function classify(word: string, nextNonSpace: string): TokenKind {
   if (CONSTANTS.has(upper.toLowerCase()) || CONSTANTS.has(upper)) return "constant";
   if (TYPES.has(upper.toLowerCase())) return "type";
   if (KEYWORDS.has(upper.toLowerCase())) return "keyword";
-  if (FUNCTIONS.has(upper.toLowerCase()) || nextNonSpace.startsWith("(")) return "function";
+  if (KNOWN_FUNCTIONS.has(upper.toLowerCase()) || nextNonSpace.startsWith("(")) return "function";
   return "plain";
 }
 
@@ -209,13 +209,13 @@ export function tokenizeLines(code: string): Token[][] {
 }
 
 export const TOKEN_CLASS: Record<TokenKind, string> = {
-  plain: "text-slate-200",
-  keyword: "text-violet-300 font-medium",
-  type: "text-teal-300",
-  constant: "text-orange-300",
-  function: "text-sky-300",
-  string: "text-emerald-300",
-  number: "text-amber-300",
-  comment: "text-slate-500 italic",
-  operator: "text-slate-400",
+  plain: "text-slate-800 dark:text-slate-200",
+  keyword: "text-violet-700 dark:text-violet-300 font-medium",
+  type: "text-teal-700 dark:text-teal-300",
+  constant: "text-orange-700 dark:text-orange-300",
+  function: "text-sky-700 dark:text-sky-300",
+  string: "text-emerald-700 dark:text-emerald-300",
+  number: "text-amber-700 dark:text-amber-300",
+  comment: "text-slate-400 italic dark:text-slate-500",
+  operator: "text-slate-500 dark:text-slate-400",
 };

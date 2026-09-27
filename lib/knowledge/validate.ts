@@ -12,17 +12,18 @@ export interface ValidationResult {
   warnings: SyntaxIssue[];
 }
 
-const PLSQL_RE = /(\bBEGIN\b|\bDECLARE\b|CREATE\s+OR\s+REPLACE|\bPACKAGE\b|\bPROCEDURE\b|\bFUNCTION\b|\bTRIGGER\b)/i;
+const PLSQL_RE =
+  /(\bBEGIN\b|\bDECLARE\b|CREATE\s+OR\s+REPLACE|\bPACKAGE\b|\bPROCEDURE\b|\bFUNCTION\b|\bTRIGGER\b)/i;
 
 interface ScanResult {
+  /** Código sin strings ni comentarios (conserva saltos de línea). */
   cleaned: string;
   issues: SyntaxIssue[];
 }
 
 /**
  * Recorre el código quitando strings y comentarios (los reemplaza por espacios
- * conservando los saltos de línea) y a la vez valida paréntesis, comillas y
- * comentarios de bloque.
+ * conservando los saltos de línea) y valida paréntesis, comillas y comentarios.
  */
 function scan(code: string): ScanResult {
   const chars = code.replace(/\r\n?/g, "\n").split("");
@@ -133,6 +134,8 @@ function scan(code: string): ScanResult {
 interface Token {
   value: string;
   line: number;
+  /** Token que abre/cierra algo ( ; , ( ) etc. ) para separar sentencias. */
+  isPunct: boolean;
 }
 
 function tokenize(cleaned: string): Token[] {
@@ -143,7 +146,7 @@ function tokenize(cleaned: string): Token[] {
 
   const flush = () => {
     if (buffer) {
-      tokens.push({ value: buffer, line: startLine });
+      tokens.push({ value: buffer, line: startLine, isPunct: false });
       buffer = "";
     }
   };
@@ -160,73 +163,174 @@ function tokenize(cleaned: string): Token[] {
       buffer += ch;
     } else {
       flush();
-      if (!/\s/.test(ch)) tokens.push({ value: ch, line });
+      if (!/\s/.test(ch)) tokens.push({ value: ch, line, isPunct: true });
     }
   }
   flush();
   return tokens;
 }
 
-function analyzeBlocks(cleaned: string): SyntaxIssue[] {
+type BlockKind = "BEGIN" | "IF" | "LOOP" | "CASE" | "CASE_STMT";
+
+interface Block {
+  kw: BlockKind;
+  line: number;
+}
+
+interface BlockAnalysis {
+  issues: SyntaxIssue[];
+  /** Profundidad y contexto por índice de token (para el chequeo de ELSE IF). */
+  contextByIndex: Map<number, { depth: number; inPlsql: boolean }>;
+}
+
+/**
+ * Analiza bloques BEGIN/IF/LOOP/CASE con una pila real, distinguiendo:
+ *  - CASE como sentencia (lleva END CASE) o como expresión (lleva END)
+ *  - END IF / END LOOP / END CASE
+ * Además devuelve, por token, si es ELSE IF realmente mal escrito (mismo bloque).
+ */
+function analyzeBlocks(tokens: Token[]): BlockAnalysis {
   const issues: SyntaxIssue[] = [];
-  const tokens = tokenize(cleaned);
-  const stack: { kw: "BEGIN" | "IF" | "LOOP" | "CASE"; line: number }[] = [];
+  const contextByIndex = new Map<number, { depth: number; inPlsql: boolean }>();
+  let inPlsql = false;
+  for (let i = 0; i < tokens.length; i++) {
+    const v = tokens[i].value.toUpperCase();
+    if (
+      v === "BEGIN" ||
+      v === "DECLARE" ||
+      v === "PROCEDURE" ||
+      v === "FUNCTION" ||
+      v === "TRIGGER" ||
+      v === "PACKAGE"
+    ) {
+      inPlsql = true;
+      break;
+    }
+  }
+
+  // Pilas separadas para evitar que un tipo de bloque desincronice a otro.
+  // Los CASE llevan su propia pila porque su `END` comparte sintaxis con BEGIN.
+  const ctrl: Block[] = []; // BEGIN / IF / LOOP
+  const cases: { kind: "CASE" | "CASE_STMT"; line: number }[] = [];
 
   for (let i = 0; i < tokens.length; i++) {
-    const up = tokens[i].value.toUpperCase();
+    const token = tokens[i];
+    const up = token.value.toUpperCase();
+    contextByIndex.set(i, { depth: ctrl.length + cases.length, inPlsql });
 
     if (up === "BEGIN") {
-      stack.push({ kw: "BEGIN", line: tokens[i].line });
+      ctrl.push({ kw: "BEGIN", line: token.line });
       continue;
     }
     if (up === "IF") {
-      stack.push({ kw: "IF", line: tokens[i].line });
+      ctrl.push({ kw: "IF", line: token.line });
       continue;
     }
     if (up === "LOOP") {
-      stack.push({ kw: "LOOP", line: tokens[i].line });
+      ctrl.push({ kw: "LOOP", line: token.line });
       continue;
     }
     if (up === "CASE") {
-      // Puede ser CASE statement (END CASE) o CASE expression (END).
-      stack.push({ kw: "CASE", line: tokens[i].line });
+      const prev = i > 0 ? tokens[i - 1] : null;
+      const prevValue = prev?.value ?? "";
+      const prevWord = prevValue.toUpperCase();
+      const startsStatement =
+        !prev ||
+        prevValue === ";" ||
+        ["BEGIN", "THEN", "ELSE", "LOOP", "EXCEPTION", "DECLARE", "IS", "AS"].includes(prevWord);
+      const startsExpression =
+        prevValue === ":=" ||
+        prevValue === "(" ||
+        prevValue === "," ||
+        prevValue === "=" ||
+        prevValue === ">" ||
+        prevValue === "<" ||
+        prevWord === "RETURN";
+      cases.push({
+        kind: startsStatement && !startsExpression ? "CASE_STMT" : "CASE",
+        line: token.line,
+      });
       continue;
     }
+
     if (up === "END") {
       const next = tokens[i + 1]?.value.toUpperCase();
-      if (next === "IF" || next === "LOOP" || next === "CASE") {
-        closeBlock(stack, next, tokens[i].line, issues);
+      if (next === "IF") {
+        closeCtrl("IF", token.line);
         i++;
         continue;
       }
-      const top = stack[stack.length - 1];
-      if (top?.kw === "BEGIN" || top?.kw === "CASE") {
-        stack.pop();
-      } else if (top) {
-        issues.push({
-          severity: "error",
-          line: tokens[i].line,
-          message: `END inesperado: falta END ${top.kw} (abierto en la línea ${top.line})`,
-        });
-      } else {
-        issues.push({
-          severity: "warning",
-          line: tokens[i].line,
-          message:
-            "END sin BEGIN (normal en package specification o en la unidad de programa)",
-        });
+      if (next === "LOOP") {
+        closeCtrl("LOOP", token.line);
+        i++;
+        continue;
+      }
+      if (next === "CASE") {
+        // END CASE solo corresponde a una sentencia CASE.
+        const c = cases.pop();
+        if (!c || c.kind !== "CASE_STMT") {
+          issues.push({
+            severity: "error",
+            line: token.line,
+            message: c
+              ? `END CASE inesperado: el CASE de la línea ${c.line} es una expresión`
+              : "END CASE sin CASE correspondiente",
+          });
+        }
+        i++;
+        continue;
+      }
+      // `END;` sin sufijo: cierra el CASE más reciente si existe; si no, un
+      // bloque de control (BEGIN, o IF/LOOP huérfano).
+      if (cases.length > 0) {
+        const c = cases.pop();
+        if (c?.kind === "CASE_STMT") {
+          issues.push({
+            severity: "error",
+            line: token.line,
+            message: `Se esperaba END CASE (abierto en la línea ${c.line})`,
+          });
+        }
+        continue;
+      }
+      const b = ctrl.pop();
+      if (b && b.kw !== "BEGIN") {
+        issues.push(endMismatch(b.kw as "IF" | "LOOP", token.line, b));
       }
       continue;
     }
   }
 
-  for (const open of stack) {
-    if (open.kw === "BEGIN" || open.kw === "CASE") {
-      issues.push({
-        severity: "warning",
-        line: open.line,
-        message: `${open.kw === "CASE" ? "CASE" : "BEGIN"} sin END`,
-      });
+  function closeCtrl(kind: "IF" | "LOOP", line: number) {
+    const b = ctrl[ctrl.length - 1];
+    if (b?.kw === kind) {
+      ctrl.pop();
+      return;
+    }
+    // El tope no coincide: normalmente hay un BEGIN interno todavía abierto
+    // por un `END;` que el lexer no pudo emparejar. Para no generar falsos
+    // positivos, cerramos el bloque del tipo esperado si existe en la pila;
+    // si no existe, lo ignoramos (los bloques realmente sin cerrar se
+    // reportan al final). Nunca borramos la cola, solo el elemento elegido.
+    for (let k = ctrl.length - 1; k >= 0; k--) {
+      if (ctrl[k].kw === kind) {
+        ctrl.splice(k, 1);
+        return;
+      }
+    }
+    void line;
+  }
+
+  for (const open of cases) {
+    issues.push({
+      severity: open.kind === "CASE_STMT" ? "error" : "warning",
+      line: open.line,
+      message: open.kind === "CASE_STMT" ? "CASE sin END CASE" : "CASE (expresión) sin END",
+    });
+  }
+  for (const open of ctrl) {
+    if (open.kw === "BEGIN") {
+      issues.push({ severity: "warning", line: open.line, message: "BEGIN sin END" });
     } else {
       issues.push({
         severity: "error",
@@ -236,60 +340,73 @@ function analyzeBlocks(cleaned: string): SyntaxIssue[] {
     }
   }
 
-  return issues;
+  return { issues, contextByIndex };
 }
 
-function closeBlock(
-  stack: { kw: "BEGIN" | "IF" | "LOOP" | "CASE"; line: number }[],
+function endMismatch(
   kw: "IF" | "LOOP" | "CASE",
   line: number,
-  issues: SyntaxIssue[],
-) {
-  const top = stack[stack.length - 1];
-  if (top?.kw === kw) {
-    stack.pop();
-  } else {
-    issues.push({
-      severity: "error",
-      line,
-      message: top
-        ? `END ${kw} inesperado: se esperaba cerrar ${top.kw} (línea ${top.line})`
-        : `END ${kw} sin ${kw} correspondiente`,
-    });
-  }
+  b: Block | undefined,
+): SyntaxIssue {
+  return {
+    severity: "error",
+    line,
+    message: b
+      ? `END ${kw} inesperado: se esperaba cerrar ${b.kw === "CASE_STMT" ? "CASE" : b.kw} (línea ${b.line})`
+      : `END ${kw} sin ${kw} correspondiente`,
+  };
 }
 
-function analyzeStatements(cleaned: string): SyntaxIssue[] {
+function analyzeStatements(tokens: Token[], context: BlockAnalysis["contextByIndex"]): SyntaxIssue[] {
   const issues: SyntaxIssue[] = [];
-  const tokens = tokenize(cleaned);
   const up = (i: number) => tokens[i]?.value.toUpperCase();
 
-  // ELSE IF (debe ser ELSIF)
   for (let i = 0; i < tokens.length; i++) {
-    if (up(i) === "ELSE" && up(i + 1) === "IF") {
-      issues.push({
-        severity: "error",
-        line: tokens[i].line,
-        message: "Usa ELSIF en lugar de ELSE IF",
-      });
+    const t = up(i);
+
+    // `ELSE IF` real (error): el IF continua al ELSE en la MISMA línea, sin
+    // punto y coma entre medio. Si están en líneas distintas suele ser un
+    // `ELSE` que cierra una rama y un `IF` anidado nuevo (válido), o un
+    // comentario entre ambos, así que no lo reportamos.
+    if (t === "ELSE" && up(i + 1) === "IF") {
+      const sameLine = tokens[i].line === tokens[i + 1].line;
+      const nested = context.get(i + 1)?.depth ?? 0;
+      const outer = context.get(i)?.depth ?? 0;
+      // Solo error si es la misma línea y el IF no abre un bloque más profundo
+      // (en `ELSE IF` el IF no tiene su propio `END IF`).
+      if (sameLine && nested <= outer) {
+        issues.push({
+          severity: "error",
+          line: tokens[i].line,
+          message: "Usa ELSIF en lugar de ELSE IF",
+        });
+      }
     }
 
-    // IF / ELSIF deben llevar THEN
-    const t = up(i);
+    // IF / ELSIF deben llevar THEN dentro de PL/SQL. Excluye el `IF` de un
+    // `END IF` y las funciones SQL (`IF(...)` no existe en Oracle SQL).
     if (t === "IF" || t === "ELSIF") {
-      let j = i + 1;
-      let hasThen = false;
-      while (j < tokens.length) {
-        const v = up(j);
-        if (v === "THEN") {
-          hasThen = true;
-          break;
+      const prev = up(i - 1);
+      const skip = t === "IF" && (prev === "END" || prev === ")");
+      if (!skip && context.get(i)?.inPlsql) {
+        let j = i + 1;
+        let hasThen = false;
+        let depth = 0;
+        while (j < tokens.length && j < i + 60) {
+          const v = up(j);
+          if (v === "(") depth++;
+          else if (v === ")") depth--;
+          else if (v === "THEN" && depth <= 0) {
+            hasThen = true;
+            break;
+          } else if ((v === ";" || v === "END") && depth <= 0) {
+            break;
+          }
+          j++;
         }
-        if (v === ";" || v === "END") break;
-        j++;
-      }
-      if (!hasThen) {
-        issues.push({ severity: "error", line: tokens[i].line, message: `${t} sin THEN` });
+        if (!hasThen) {
+          issues.push({ severity: "error", line: tokens[i].line, message: `${t} sin THEN` });
+        }
       }
     }
 
@@ -297,14 +414,17 @@ function analyzeStatements(cleaned: string): SyntaxIssue[] {
     if (t === "END") {
       const n1 = up(i + 1);
       if (n1 === "IF" || n1 === "LOOP" || n1 === "CASE") {
-        if (up(i + 2) !== ";") {
+        // El `;` puede venir tras un identificador opcional (END LOOP nombre;)
+        let j = i + 2;
+        if (!tokens[j]?.isPunct) j++;
+        if (up(j) !== ";") {
           issues.push({
             severity: "warning",
             line: tokens[i].line,
             message: `Falta ";" después de END ${n1}`,
           });
         }
-        i++; // no tratar IF/LOOP/CASE de este END como una apertura
+        i++;
       }
     }
   }
@@ -316,25 +436,38 @@ function analyzeStatements(cleaned: string): SyntaxIssue[] {
     issues.push({ severity: "warning", line: tokens[0]?.line ?? 1, message: "DECLARE sin BEGIN" });
   }
 
-  // Tipos comunes mal escritos
-  const seenType = new Set<string>();
+  // `STRING` no es un tipo de Oracle. `VARCHAR` es un sinónimo válido de
+  // VARCHAR2, así que NO se reporta.
+  const seen = new Set<string>();
   for (const tok of tokens) {
     const v = tok.value.toUpperCase();
-    if (v === "VARCHAR" && !seenType.has(v)) {
-      seenType.add(v);
+    if (v === "STRING" && !seen.has(v)) {
+      seen.add(v);
       issues.push({
         severity: "warning",
         line: tok.line,
-        message: "En Oracle se usa VARCHAR2 en lugar de VARCHAR",
+        message: "'STRING' no es un tipo válido en Oracle (usa VARCHAR2)",
       });
     }
-    if (v === "STRING" && !seenType.has(v)) {
-      seenType.add(v);
-      issues.push({ severity: "warning", line: tok.line, message: "'STRING' no es un tipo válido en Oracle" });
+    if (v === "BOOL" && !seen.has(v)) {
+      seen.add(v);
+      issues.push({
+        severity: "warning",
+        line: tok.line,
+        message: "En Oracle no existe BOOL; usa BOOLEAN o NUMBER(1)",
+      });
+    }
+    if ((v === "INT" || v === "DATETIME") && !seen.has(v)) {
+      seen.add(v);
+      issues.push({
+        severity: "warning",
+        line: tok.line,
+        message: `'${v}' no es un tipo habitual en Oracle (usa NUMBER / DATE)`,
+      });
     }
   }
 
-  // Unidades de programa (IS/AS obligatorio en PROCEDURE/FUNCTION/PACKAGE)
+  // Unidades de programa: IS/AS obligatorio en PROCEDURE/FUNCTION/PACKAGE.
   for (let i = 0; i + 3 < tokens.length; i++) {
     if (up(i) === "CREATE" && up(i + 1) === "OR" && up(i + 2) === "REPLACE") {
       let j = i + 3;
@@ -348,16 +481,19 @@ function analyzeStatements(cleaned: string): SyntaxIssue[] {
       if (unit === "PROCEDURE" || unit === "FUNCTION" || unit === "PACKAGE") {
         let k = j + 1;
         let found = false;
+        // La cabecera puede terminar en `;` (package spec sin cuerpo en línea).
         while (k < tokens.length) {
           const v = up(k);
           if (v === "IS" || v === "AS") {
             found = true;
             break;
           }
-          if (v === "BEGIN") break;
+          if (v === "BEGIN" || v === ";" || v === "END") break;
           k++;
         }
-        if (!found) {
+        // Un package spec sin `IS` es inusual, pero puede declararse como
+        // `PACKAGE x IS ...`; si no aparece, avisamos solo para rutinas.
+        if (!found && (unit === "PROCEDURE" || unit === "FUNCTION")) {
           issues.push({
             severity: "error",
             line: tokens[j].line,
@@ -368,7 +504,7 @@ function analyzeStatements(cleaned: string): SyntaxIssue[] {
     }
   }
 
-  // Nombre del END debe coincidir con una unidad declarada
+  // Nombre del END debe coincidir con una unidad declarada.
   const declared = new Set<string>();
   for (let i = 0; i < tokens.length; i++) {
     const v = up(i);
@@ -394,13 +530,26 @@ function analyzeStatements(cleaned: string): SyntaxIssue[] {
     }
   }
 
+  // Punto y coma duplicado (;;) es casi siempre un error de tipeo.
+  for (let i = 0; i < tokens.length; i++) {
+    if (tokens[i].value === ";" && tokens[i + 1]?.value === ";") {
+      issues.push({
+        severity: "warning",
+        line: tokens[i + 1].line,
+        message: "Punto y coma (;) duplicado",
+      });
+      break;
+    }
+  }
+
   return issues;
 }
 
 /**
  * Valida sintaxis PL/SQL de forma heurística (no es un compilador real).
  * Detecta paréntesis/comillas/comentarios sin balancear, bloques
- * BEGIN/END, IF/END IF y LOOP/END LOOP, y avisos comunes.
+ * BEGIN/END, IF/ELSIF, LOOP/END LOOP y CASE, y avisos comunes, evitando
+ * falsos positivos como ELSE IF dentro de otro bloque o VARCHAR (válido en Oracle).
  */
 export function validateOracleCode(code: string): ValidationResult {
   const normalized = (code ?? "").replace(/\r\n?/g, "\n");
@@ -424,14 +573,19 @@ export function validateOracleCode(code: string): ValidationResult {
   }
 
   if (isPlsql) {
-    for (const issue of analyzeBlocks(cleaned)) {
+    const tokens = tokenize(cleaned);
+    const blocks = analyzeBlocks(tokens);
+    for (const issue of blocks.issues) {
       (issue.severity === "error" ? errors : warnings).push(issue);
     }
-    for (const issue of analyzeStatements(cleaned)) {
+    for (const issue of analyzeStatements(tokens, blocks.contextByIndex)) {
       (issue.severity === "error" ? errors : warnings).push(issue);
     }
 
-    if (!trimmed.endsWith(";")) {
+    // El punto y coma final se evalúa sobre el código sin comentarios ni
+    // strings, ignorando un `/` final de SQL*Plus.
+    const cleanedTrimmed = cleaned.replace(/\/\s*$/, "").trim();
+    if (!cleanedTrimmed.endsWith(";")) {
       warnings.push({
         severity: "warning",
         line: normalized.split("\n").length,
@@ -449,7 +603,7 @@ export function validateOracleCode(code: string): ValidationResult {
         message: "CREATE OR REPLACE sin especificar el tipo de objeto",
       });
     }
-  } else if (!trimmed.endsWith(";")) {
+  } else if (!cleaned.replace(/\/\s*$/, "").trim().endsWith(";")) {
     warnings.push({
       severity: "warning",
       line: normalized.split("\n").length,

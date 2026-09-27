@@ -14,7 +14,7 @@ export function TableView({
 }: {
   onCardClick: (card: CardWithLabels) => void;
 }) {
-  const { lists, labels } = useBoard();
+  const { lists, labels, fields } = useBoard();
   const [query, setQuery] = useState("");
   const [listFilter, setListFilter] = useState("all");
   const [labelFilter, setLabelFilter] = useState("all");
@@ -78,12 +78,17 @@ export function TableView({
               <th className="px-4 py-3 font-medium">Etiquetas</th>
               <th className="px-4 py-3 font-medium">Estado</th>
               <th className="px-4 py-3 font-medium">Fecha límite</th>
+              {fields.map((field) => (
+                <th key={field.id} className="px-4 py-3 font-medium">
+                  {field.name}
+                </th>
+              ))}
             </tr>
           </thead>
           <tbody>
             {rows.length === 0 && (
               <tr>
-                <td colSpan={6} className="px-4 py-10 text-center text-muted-foreground">
+                <td colSpan={6 + fields.length} className="px-4 py-10 text-center text-muted-foreground">
                   Sin resultados
                 </td>
               </tr>
@@ -167,6 +172,24 @@ export function TableView({
                 >
                   {formatDate(card.due_date) ?? "—"}
                 </td>
+                {fields.map((field) => {
+                  const value = card.card_field_values?.find(
+                    (v) => v.field_id === field.id,
+                  )?.value;
+                  const display =
+                    field.field_type === "CHECKBOX"
+                      ? value === "true"
+                        ? "Sí"
+                        : value === "false" || value == null
+                          ? "No"
+                          : value
+                      : value || "—";
+                  return (
+                    <td key={field.id} className="px-4 py-3 text-muted-foreground">
+                      {display}
+                    </td>
+                  );
+                })}
               </tr>
               );
             })}
