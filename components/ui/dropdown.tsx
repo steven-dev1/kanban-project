@@ -1,7 +1,14 @@
 "use client";
 
 import { cn, initials } from "@/lib/utils";
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
+
+interface Position {
+  top: number;
+  left: number;
+  minWidth: number;
+}
 
 export function Dropdown({
   trigger,
@@ -17,12 +24,52 @@ export function Dropdown({
   panelClassName?: string;
 }) {
   const [open, setOpen] = useState(false);
+  const [position, setPosition] = useState<Position | null>(null);
   const ref = useRef<HTMLDivElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+  const close = () => setOpen(false);
+
+  // El panel se dibuja en un portal para escapar de cualquier `overflow`
+  // (tablas, tarjetas) que recortaba el menú. Se posiciona con el rect del
+  // trigger, alineado a la derecha o izquierda según `align`.
+  useLayoutEffect(() => {
+    if (!open) return;
+    const update = () => {
+      const el = ref.current;
+      const panel = panelRef.current;
+      if (!el) return;
+      const rect = el.getBoundingClientRect();
+      const panelWidth = panel?.offsetWidth ?? 200;
+      const panelHeight = panel?.offsetHeight ?? 0;
+      const margin = 8;
+
+      let left = align === "end" ? rect.right - panelWidth : rect.left;
+      // Evita salirse por los lados.
+      left = Math.max(margin, Math.min(left, window.innerWidth - panelWidth - margin));
+
+      let top = rect.bottom + 8;
+      // Si no cabe abajo, abre hacia arriba.
+      if (panelHeight && top + panelHeight > window.innerHeight - margin) {
+        top = Math.max(margin, rect.top - panelHeight - 8);
+      }
+
+      setPosition({ top, left, minWidth: Math.max(rect.width, 200) });
+    };
+    update();
+    window.addEventListener("resize", update);
+    window.addEventListener("scroll", update, true);
+    return () => {
+      window.removeEventListener("resize", update);
+      window.removeEventListener("scroll", update, true);
+    };
+  }, [open, align]);
 
   useEffect(() => {
     if (!open) return;
     const onClick = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+      const target = e.target as Node;
+      if (ref.current?.contains(target) || panelRef.current?.contains(target)) return;
+      setOpen(false);
     };
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && setOpen(false);
     document.addEventListener("mousedown", onClick);
@@ -36,17 +83,27 @@ export function Dropdown({
   return (
     <div ref={ref} className={cn("relative", className)}>
       <div onClick={() => setOpen((v) => !v)}>{trigger}</div>
-      {open && (
-        <div
-          className={cn(
-            "animate-menu absolute z-40 mt-2 min-w-[200px] rounded-xl border border-border bg-card p-1.5 shadow-xl",
-            align === "end" ? "right-0" : "left-0",
-            panelClassName,
-          )}
-        >
-          {children(() => setOpen(false))}
-        </div>
-      )}
+      {open &&
+        typeof document !== "undefined" &&
+        createPortal(
+          <div
+            ref={panelRef}
+            style={{
+              position: "fixed",
+              top: position?.top ?? -9999,
+              left: position?.left ?? -9999,
+              minWidth: position?.minWidth,
+              visibility: position ? "visible" : "hidden",
+            }}
+            className={cn(
+              "animate-menu z-[100] rounded-xl border border-border bg-card p-1.5 shadow-xl",
+              panelClassName,
+            )}
+          >
+            {children(close)}
+          </div>,
+          document.body,
+        )}
     </div>
   );
 }
