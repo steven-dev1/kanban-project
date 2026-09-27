@@ -13,6 +13,7 @@ import { Modal } from "@/components/ui/modal";
 import { Select } from "@/components/ui/select";
 import { useToast } from "@/components/ui/toast";
 import type { CardAssignee } from "@/lib/types";
+import { sanitizeHtml } from "@/lib/sanitize";
 import { LABEL_COLORS, cn } from "@/lib/utils";
 import { useBoard } from "@/providers/board-provider";
 import {
@@ -144,7 +145,8 @@ export function CardDialog({
     setDescription(html);
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(() => {
-      updateCard(card!.id, { description: html });
+      // Se sanitiza antes de guardar para no persistir HTML peligroso.
+      updateCard(card!.id, { description: sanitizeHtml(html) });
     }, 600);
   }
 

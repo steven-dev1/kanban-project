@@ -28,6 +28,23 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Faltan el tablero o el correo" }, { status: 400 });
   }
 
+  // Validación de formato y longitud del correo.
+  if (email.length > 254 || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
+    return NextResponse.json({ error: "El correo no es válido" }, { status: 400 });
+  }
+
+  // Evita invitaciones pendientes duplicadas para el mismo correo y tablero.
+  const { data: existing } = await supabase
+    .from("board_invitations")
+    .select("id")
+    .eq("board_id", boardId)
+    .ilike("email", email)
+    .eq("status", "pending")
+    .maybeSingle();
+  if (existing) {
+    return NextResponse.json({ error: "Ya hay una invitación pendiente para ese correo" }, { status: 409 });
+  }
+
   // La RLS exige que el usuario sea admin/propietario del tablero.
   const { error } = await supabase.from("board_invitations").insert({
     board_id: boardId,

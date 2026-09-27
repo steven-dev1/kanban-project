@@ -1,5 +1,6 @@
 "use client";
 
+import { sanitizeHtml } from "@/lib/sanitize";
 import { cn } from "@/lib/utils";
 import Link from "@tiptap/extension-link";
 import Placeholder from "@tiptap/extension-placeholder";
@@ -75,7 +76,7 @@ export function RichTextEditor({
     return (
       <div
         className="tiptap text-sm text-muted-foreground"
-        dangerouslySetInnerHTML={{ __html: content || "<p>Sin descripción</p>" }}
+        dangerouslySetInnerHTML={{ __html: sanitizeHtml(content) || "<p>Sin descripción</p>" }}
       />
     );
   }

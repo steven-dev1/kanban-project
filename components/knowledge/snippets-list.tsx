@@ -34,7 +34,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useMemo, useState } from "react";
+import { useDeferredValue, useMemo, useState } from "react";
 
 const ALL = "__all__";
 const NO_FOLDER = "__none__";
@@ -98,6 +98,8 @@ export function SnippetsList({
   const [foldersOpen, setFoldersOpen] = useState(true);
   const [emptyFolders, setEmptyFolders] = useState<string[]>(() => readStoredFolders());
 
+  const deferredQuery = useDeferredValue(query);
+
   const base = useMemo(
     () => snippets.filter((s) => !favoritesOnly || s.is_favorite),
     [snippets, favoritesOnly],
@@ -126,7 +128,7 @@ export function SnippetsList({
   }, [snippets]);
 
   const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
+    const q = deferredQuery.trim().toLowerCase();
     const result = base.filter((s) => {
       if (activeFolder === NO_FOLDER) {
         if (s.folder) return false;
@@ -150,7 +152,7 @@ export function SnippetsList({
       if (sort === "created") return b.created_at.localeCompare(a.created_at);
       return b.updated_at.localeCompare(a.updated_at);
     });
-  }, [base, activeFolder, query, category, databaseType, environment, tagId, sort]);
+  }, [base, activeFolder, deferredQuery, category, databaseType, environment, tagId, sort]);
 
   const moveSelectedTo = async (folder: string | null) => {
     try {

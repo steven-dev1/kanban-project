@@ -64,7 +64,9 @@ export function AuthProvider({
       .getUser()
       .then(({ data }: { data: { user: User | null } }) => {
         if (!active) return;
-        setUser(data.user);
+        // No reemplaza el usuario si es el mismo id (evita re-renders y
+        // recargas en cascada de otros providers).
+        setUser((prev) => (prev?.id === data.user?.id ? prev : data.user));
         if (data.user) loadProfile(data.user.id).finally(() => setLoading(false));
         else setLoading(false);
       })
@@ -77,8 +79,9 @@ export function AuthProvider({
       data: { subscription },
     } = supabase.auth.onAuthStateChange(
       (_event: AuthChangeEvent, session: Session | null) => {
-        setUser(session?.user ?? null);
-        if (session?.user) loadProfile(session.user.id);
+        const nextUser = session?.user ?? null;
+        setUser((prev) => (prev?.id === nextUser?.id ? prev : nextUser));
+        if (nextUser) loadProfile(nextUser.id);
         else setProfile(null);
         router.refresh();
       },

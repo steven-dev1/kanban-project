@@ -9,7 +9,7 @@ import { cn } from "@/lib/utils";
 import { useKnowledge } from "@/providers/knowledge-provider";
 import { Code2, Database, FileCode2, Hash, Search as SearchIcon, Tag as TagIcon } from "lucide-react";
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useDeferredValue, useMemo, useState } from "react";
 
 const ALL = "__all__";
 
@@ -111,8 +111,13 @@ export function SearchPanel({ initialQuery = "" }: { initialQuery?: string }) {
     [objects],
   );
 
+  // Diferir el texto de búsqueda: el usuario escribe fluido y el cálculo
+  // pesado (recorrer objetos, columnas y código con Levenshtein) se hace
+  // sobre el valor diferido, evitando recalcular en cada pulsación.
+  const deferredQuery = useDeferredValue(query);
+
   const results = useMemo<ResultItem[]>(() => {
-    const q = query.trim().toLowerCase();
+    const q = deferredQuery.trim().toLowerCase();
     const items: ResultItem[] = [];
     const terms = q.split(/\s+/).filter(Boolean);
 
@@ -247,7 +252,7 @@ export function SearchPanel({ initialQuery = "" }: { initialQuery?: string }) {
 
     const filtered = kind === ALL ? items : items.filter((i) => i.kind === kind);
     return filtered.slice(0, 200);
-  }, [objects, snippets, query, kind, schema, environment, module, tagId]);
+  }, [objects, snippets, deferredQuery, kind, schema, environment, module, tagId]);
 
   return (
     <div className="flex h-full flex-col">

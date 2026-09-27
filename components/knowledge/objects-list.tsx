@@ -25,7 +25,7 @@ import { cn, formatDate } from "@/lib/utils";
 import { useKnowledge } from "@/providers/knowledge-provider";
 import { Download, FileInput, Filter, PackageOpen, Plus, Search, Star } from "lucide-react";
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useDeferredValue, useMemo, useState } from "react";
 
 type SortKey = "name" | "updated" | "created";
 
@@ -75,7 +75,8 @@ export function ObjectsList({
     [base],
   );
 
-  const normalizedQuery = query.trim().toLowerCase();
+  const deferredQuery = useDeferredValue(query);
+  const normalizedQuery = deferredQuery.trim().toLowerCase();
 
   const filtered = useMemo(() => {
     const result = base.filter((o) => {
@@ -397,7 +398,7 @@ export function ObjectsList({
                                   title={column.description ?? column.business_meaning ?? undefined}
                                   className="rounded bg-primary/10 px-1.5 py-0.5 font-mono text-[10px] font-medium text-primary"
                                 >
-                                  <Highlight text={column.column_name} query={query.trim()} />
+                                  <Highlight text={column.column_name} query={deferredQuery.trim()} />
                                 </span>
                               ))}
                               {cols.length > 5 && (
