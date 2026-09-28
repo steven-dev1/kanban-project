@@ -292,7 +292,9 @@ export function KnowledgeProvider({ children }: { children: ReactNode }) {
       supabase.from("knowledge_tags").select("*").order("name"),
       supabase.from("knowledge_object_tags").select("*"),
       supabase.from("knowledge_snippet_tags").select("*"),
-      supabase.from("profiles").select("*").order("full_name"),
+      // Directorio completo vía SECURITY DEFINER (incluye al propio usuario),
+      // para poder asignar responsables sin exponer datos sensibles a RLS.
+      supabase.rpc("list_directory"),
       supabase.from("pull_requests").select("*").order("created_at", { ascending: false }),
     ]);
 

@@ -38,13 +38,12 @@ export function SendItemDialog({
   useEffect(() => {
     if (!open || !user) return;
     let active = true;
+    // Directorio completo (SECURITY DEFINER) para elegir destinatario aunque
+    // no comparta tablero con el usuario.
     supabase
-      .from("profiles")
-      .select("*")
-      .neq("id", user.id)
-      .order("full_name")
+      .rpc("list_directory")
       .then((res: { data: Profile[] | null }) => {
-        if (active) setProfiles(res.data ?? []);
+        if (active) setProfiles((res.data ?? []).filter((p) => p.id !== user.id));
       });
     return () => {
       active = false;

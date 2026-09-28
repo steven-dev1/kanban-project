@@ -34,35 +34,44 @@ export function Dropdown({
   // trigger, alineado a la derecha o izquierda según `align`.
   useLayoutEffect(() => {
     if (!open) return;
-    const update = () => {
-      const el = ref.current;
-      const panel = panelRef.current;
-      if (!el) return;
-      const rect = el.getBoundingClientRect();
-      const panelWidth = panel?.offsetWidth ?? 200;
-      const panelHeight = panel?.offsetHeight ?? 0;
-      const margin = 8;
+    const el = ref.current;
+    const rect = el?.getBoundingClientRect();
+    const margin = 8;
+    const minWidth = rect ? Math.min(Math.max(rect.width, 200), 320) : 200;
 
-      let left = align === "end" ? rect.right - panelWidth : rect.left;
-      // Evita salirse por los lados.
+    const update = () => {
+      const anchor = ref.current;
+      const panel = panelRef.current;
+      if (!anchor || !panel) return;
+      const a = anchor.getBoundingClientRect();
+      const panelWidth = panel.offsetWidth || minWidth;
+      const panelHeight = panel.offsetHeight || 0;
+
+      let left = align === "end" ? a.right - panelWidth : a.left;
       left = Math.max(margin, Math.min(left, window.innerWidth - panelWidth - margin));
 
-      let top = rect.bottom + 8;
-      // Si no cabe abajo, abre hacia arriba.
+      let top = a.bottom + 8;
       if (panelHeight && top + panelHeight > window.innerHeight - margin) {
-        top = Math.max(margin, rect.top - panelHeight - 8);
+        top = Math.max(margin, a.top - panelHeight - 8);
       }
-
-      // El ancho se ajusta al del trigger pero acotado: un trigger que ocupa
-      // todo el ancho (ej. en la vista tabla) no debe estirar el menú a toda
-      // la pantalla.
-      const minWidth = Math.min(Math.max(rect.width, 200), 320);
-      setPosition({ top, left, minWidth });
+      setPosition((prev) =>
+        prev && prev.top === top && prev.left === left && prev.minWidth === minWidth
+          ? prev
+          : { top, left, minWidth },
+      );
     };
+
+    // Se recalcula cuando el panel cambia de tamaño (contenido asíncrono) y en
+    // scroll/resize. Sin esto, el primer render medía mal y el menú aparecía
+    // desplazado hasta reabrirlo.
+    const observer = new ResizeObserver(update);
+    if (panelRef.current) observer.observe(panelRef.current);
     update();
+
     window.addEventListener("resize", update);
     window.addEventListener("scroll", update, true);
     return () => {
+      observer.disconnect();
       window.removeEventListener("resize", update);
       window.removeEventListener("scroll", update, true);
     };
@@ -94,11 +103,11 @@ export function Dropdown({
             ref={panelRef}
             style={{
               position: "fixed",
-              top: position?.top ?? -9999,
-              left: position?.left ?? -9999,
-              minWidth: position?.minWidth,
+              top: position?.top ?? 0,
+              left: position?.left ?? 0,
+              minWidth: position?.minWidth ?? 200,
               maxWidth: "min(360px, calc(100vw - 16px))",
-              visibility: position ? "visible" : "hidden",
+              opacity: position ? 1 : 0,
             }}
             className={cn(
               "animate-menu z-[100] rounded-xl border border-border bg-card p-1.5 shadow-xl",

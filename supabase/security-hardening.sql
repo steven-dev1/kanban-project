@@ -258,6 +258,20 @@ create policy profiles_select on public.profiles for select to authenticated
     )
   );
 
+-- Directorio para elegir destinatarios al compartir: devuelve id y nombre de
+-- todos los usuarios (sin email), mediante SECURITY DEFINER para no depender
+-- de la política anterior. No expone datos sensibles.
+create or replace function public.list_directory()
+returns table (id uuid, full_name text, email text)
+language sql security definer set search_path = public stable as $$
+  select p.id, p.full_name, p.email
+  from public.profiles p
+  order by coalesce(p.full_name, p.email);
+$$;
+
+revoke execute on function public.list_directory() from public, anon;
+grant execute on function public.list_directory() to authenticated;
+
 -- ---------------------------------------------------------------------------
 -- 4) Rol de knowledge por defecto: viewer en vez de admin
 -- ---------------------------------------------------------------------------
