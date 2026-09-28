@@ -129,6 +129,10 @@ export function BoardProvider({
   const [loadError, setLoadError] = useState<string | null>(null);
 
   const reloadTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Mientras hay una mutación local en curso, se ignoran los refetch por
+  // realtime (el "eco" del propio cambio) para que no revierta el optimismo.
+  const mutating = useRef(0);
+  const pendingRealtime = useRef(false);
 
   const refetch = useCallback(async () => {
     const [
@@ -238,9 +242,33 @@ export function BoardProvider({
   }, [supabase, boardId]);
 
   const scheduleRefetch = useCallback(() => {
+    // Si hay una mutación en curso, no recargamos (evita revertir el estado
+    // optimista con datos aún no confirmados). Se aplicará al terminar.
+    if (mutating.current > 0) {
+      pendingRealtime.current = true;
+      return;
+    }
     if (reloadTimer.current) clearTimeout(reloadTimer.current);
     reloadTimer.current = setTimeout(() => refetch(), 120);
   }, [refetch]);
+
+  /** Envuelve una mutación optimista: suspende el realtime y lo reanuda. */
+  const withOptimistic = useCallback(
+    async (fn: () => Promise<void>) => {
+      mutating.current += 1;
+      try {
+        await fn();
+      } finally {
+        mutating.current -= 1;
+        if (mutating.current === 0 && pendingRealtime.current) {
+          pendingRealtime.current = false;
+          if (reloadTimer.current) clearTimeout(reloadTimer.current);
+          reloadTimer.current = setTimeout(() => refetch(), 250);
+        }
+      }
+    },
+    [refetch],
+  );
 
   useEffect(() => {
     queueMicrotask(() => refetch());
@@ -478,16 +506,20 @@ export function BoardProvider({
         }),
       );
 
+      const previousLists = lists;
       const update = shouldMove ? { ...patch, list_id: targetId, position } : patch;
-      const { error } = await supabase.from("cards").update(update).eq("id", cardId);
-      if (error) {
-        // No se guardó: resincronizamos con la base.
-        await refetch();
-        throw toDatabaseError(error);
-      }
-      void logActivity(cardId, "complete", completed ? "Marcó como completada" : "Reabrió");
+      await withOptimistic(async () => {
+        const { error } = await supabase.from("cards").update(update).eq("id", cardId);
+        if (error) {
+          setLists(previousLists);
+          throw toDatabaseError(error);
+        }
+        void logActivity(cardId, "complete", completed ? "Marcó como completada" : "Reabrió");
+      }).catch(() => {
+        /* el estado ya fue revertido */
+      });
     },
-    [supabase, lists, refetch, logActivity],
+    [supabase, lists, logActivity, withOptimistic],
   );
 
   const addChecklistItem = useCallback(
@@ -672,9 +704,11 @@ export function BoardProvider({
       afterPos: number | null,
     ) => {
       const position = positionBetween(beforePos, afterPos);
+      const previousLists = lists;
       const moved = lists.flatMap((l) => l.cards).find((c) => c.id === cardId);
       if (!moved) return;
       const updated: CardWithLabels = { ...moved, list_id: targetListId, position };
+      // 1) Se aplica de inmediato en local (sin esperar a la base de datos).
       setLists((prev) =>
         prev.map((l) => {
           if (l.id === targetListId) {
@@ -684,17 +718,26 @@ export function BoardProvider({
           return { ...l, cards: l.cards.filter((c) => c.id !== cardId) };
         }),
       );
-      await supabase
-        .from("cards")
-        .update({ list_id: targetListId, position })
-        .eq("id", cardId);
-      const fromList = lists.find((l) => l.id === moved.list_id)?.title ?? "";
-      const toList = lists.find((l) => l.id === targetListId)?.title ?? "";
-      if (fromList !== toList) {
-        void logActivity(cardId, "move", `Movió de "${fromList}" a "${toList}"`);
-      }
+      // 2) Se persiste en segundo plano; si falla, se revierte al estado previo.
+      await withOptimistic(async () => {
+        const { error } = await supabase
+          .from("cards")
+          .update({ list_id: targetListId, position })
+          .eq("id", cardId);
+        if (error) {
+          setLists(previousLists);
+          throw toDatabaseError(error);
+        }
+        const fromList = previousLists.find((l) => l.id === moved.list_id)?.title ?? "";
+        const toList = previousLists.find((l) => l.id === targetListId)?.title ?? "";
+        if (fromList !== toList) {
+          void logActivity(cardId, "move", `Movió de "${fromList}" a "${toList}"`);
+        }
+      }).catch(() => {
+        /* el estado ya fue revertido */
+      });
     },
-    [supabase, lists, logActivity],
+    [supabase, lists, logActivity, withOptimistic],
   );
 
   const createLabel = useCallback(

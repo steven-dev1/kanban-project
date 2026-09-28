@@ -53,7 +53,11 @@ export function Dropdown({
         top = Math.max(margin, rect.top - panelHeight - 8);
       }
 
-      setPosition({ top, left, minWidth: Math.max(rect.width, 200) });
+      // El ancho se ajusta al del trigger pero acotado: un trigger que ocupa
+      // todo el ancho (ej. en la vista tabla) no debe estirar el menú a toda
+      // la pantalla.
+      const minWidth = Math.min(Math.max(rect.width, 200), 320);
+      setPosition({ top, left, minWidth });
     };
     update();
     window.addEventListener("resize", update);
@@ -93,6 +97,7 @@ export function Dropdown({
               top: position?.top ?? -9999,
               left: position?.left ?? -9999,
               minWidth: position?.minWidth,
+              maxWidth: "min(360px, calc(100vw - 16px))",
               visibility: position ? "visible" : "hidden",
             }}
             className={cn(
