@@ -82,7 +82,6 @@ export function CardDialog({
   }, [lists, cardId]);
 
   const [title, setTitle] = useState("");
-  const [description, setDescription] = useState("");
   const [showNewLabel, setShowNewLabel] = useState(false);
   const [newLabelName, setNewLabelName] = useState("");
   const [newLabelColor, setNewLabelColor] = useState(LABEL_COLORS[0]);
@@ -134,7 +133,6 @@ export function CardDialog({
     if (card && initialised.current !== card.id) {
       initialised.current = card.id;
       setTitle(card.title);
-      setDescription(card.description ?? "");
     }
     if (!card) initialised.current = null;
   }, [card]);
@@ -144,7 +142,6 @@ export function CardDialog({
   const assigned = new Set(card.card_labels?.map((cl) => cl.label_id));
 
   function handleDescription(html: string) {
-    setDescription(html);
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(() => {
       // Se sanitiza antes de guardar para no persistir HTML peligroso.
@@ -203,8 +200,12 @@ export function CardDialog({
             <label className="flex items-center gap-1.5 text-sm font-medium text-muted-foreground">
               Descripción
             </label>
+            {/* key por card: el editor TipTap no reacciona a cambios de
+                `content`, así que se remonta al abrir otra card para no mostrar
+                la descripción anterior. */}
             <RichTextEditor
-              content={description}
+              key={card.id}
+              content={card.description ?? ""}
               onChange={handleDescription}
               editable={canEdit}
             />

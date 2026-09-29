@@ -230,7 +230,9 @@ export function BoardWorkspace() {
         {view === "charts" && <ChartsView />}
       </div>
 
-      <CardDialog cardId={cardId} onClose={() => setCardId(null)} />
+      {/* key por cardId: remonta el diálogo al abrir otra card para que
+          título, descripción, fechas y demás no arrastren el estado anterior. */}
+      <CardDialog key={cardId ?? "closed"} cardId={cardId} onClose={() => setCardId(null)} />
       <MembersDialog open={membersOpen} onClose={() => setMembersOpen(false)} />
       <ArchivePanel open={archiveOpen} onClose={() => setArchiveOpen(false)} />
       <BoardFieldsDialog open={fieldsOpen} onClose={() => setFieldsOpen(false)} />
