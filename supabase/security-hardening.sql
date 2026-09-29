@@ -249,12 +249,29 @@ grant execute on function public.accept_shared_item(uuid) to authenticated;
 drop policy if exists profiles_select on public.profiles;
 create policy profiles_select on public.profiles for select to authenticated
   using (
+    -- El propio perfil.
     id = auth.uid()
+    -- Compañeros de tablero (miembros).
     or exists (
       select 1
       from public.board_members me
       join public.board_members other on other.board_id = me.board_id
       where me.user_id = auth.uid() and other.user_id = profiles.id
+    )
+    -- Propietarios de tableros a los que pertenezco (el owner no siempre es
+    -- fila de board_members).
+    or exists (
+      select 1
+      from public.boards b
+      where b.owner_id = profiles.id
+        and public.is_board_member(b.id, auth.uid())
+    )
+    -- Propietarios de tableros que yo poseo (para mostrar miembros).
+    or exists (
+      select 1
+      from public.boards b
+      join public.board_members m on m.board_id = b.id
+      where b.owner_id = auth.uid() and m.user_id = profiles.id
     )
   );
 

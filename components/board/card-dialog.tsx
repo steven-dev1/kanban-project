@@ -7,7 +7,7 @@ import { RichTextEditor } from "@/components/board/rich-text-editor";
 import { Button } from "@/components/ui/button";
 import { useConfirm } from "@/components/ui/confirm";
 import { DatePicker } from "@/components/ui/date-picker";
-import { Avatar } from "@/components/ui/dropdown";
+import { Avatar, Dropdown, DropdownItem } from "@/components/ui/dropdown";
 import { Input } from "@/components/ui/input";
 import { Modal } from "@/components/ui/modal";
 import { Select } from "@/components/ui/select";
@@ -19,6 +19,7 @@ import { useBoard } from "@/providers/board-provider";
 import {
   Archive,
   Calendar,
+  Check,
   CheckCircle2,
   Copy,
   Download,
@@ -31,6 +32,7 @@ import {
   Trash2,
   Upload,
   Users,
+  X,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
@@ -327,30 +329,70 @@ export function CardDialog({
             <label className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
               <Users className="h-3.5 w-3.5" /> Responsables
             </label>
+
+            {/* Miembros asignados como chips (se pueden quitar). */}
             <div className="flex flex-wrap gap-1.5">
-              {people.map((p) => {
-                const active = assignedIds.has(p.user_id);
-                return (
-                  <button
+              {people
+                .filter((p) => assignedIds.has(p.user_id))
+                .map((p) => (
+                  <span
                     key={p.user_id}
-                    disabled={!canEdit}
-                    onClick={() => toggleAssignee(card.id, p.user_id, !active)}
-                    className={cn(
-                      "flex items-center gap-1.5 rounded-full border px-2 py-1 text-xs transition-colors",
-                      active
-                        ? "border-primary bg-primary/10 text-primary"
-                        : "border-border opacity-60 hover:opacity-100",
-                    )}
+                    className="flex items-center gap-1.5 rounded-full border border-primary bg-primary/10 px-2 py-1 text-xs text-primary"
                   >
                     <Avatar name={p.profile?.full_name} email={p.profile?.email} size={18} />
                     {p.profile?.full_name || p.profile?.email || "Usuario"}
-                  </button>
-                );
-              })}
-              {people.length === 0 && (
-                <p className="text-xs text-muted-foreground">Sin miembros</p>
+                    {canEdit && (
+                      <button
+                        type="button"
+                        onClick={() => toggleAssignee(card.id, p.user_id, false)}
+                        className="rounded-full p-0.5 hover:bg-primary/20"
+                        aria-label="Quitar responsable"
+                      >
+                        <X className="h-3 w-3" />
+                      </button>
+                    )}
+                  </span>
+                ))}
+              {assignedIds.size === 0 && (
+                <p className="text-xs text-muted-foreground">Sin responsables asignados.</p>
               )}
             </div>
+
+            {/* Dropdown para agregar miembros. */}
+            {canEdit && people.length > 0 && (
+              <Dropdown
+                className="w-fit"
+                align="start"
+                trigger={
+                  <button
+                    type="button"
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-dashed border-border px-2.5 py-1 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"
+                  >
+                    <Plus className="h-3.5 w-3.5" /> Asignar responsable
+                  </button>
+                }
+              >
+                {() => (
+                  <div className="max-h-64 w-60 overflow-y-auto">
+                    {people.map((p) => {
+                      const active = assignedIds.has(p.user_id);
+                      return (
+                        <DropdownItem
+                          key={p.user_id}
+                          onClick={() => toggleAssignee(card.id, p.user_id, !active)}
+                        >
+                          <Avatar name={p.profile?.full_name} email={p.profile?.email} size={20} />
+                          <span className="flex-1 truncate">
+                            {p.profile?.full_name || p.profile?.email || "Usuario"}
+                          </span>
+                          {active && <Check className="h-4 w-4 text-primary" />}
+                        </DropdownItem>
+                      );
+                    })}
+                  </div>
+                )}
+              </Dropdown>
+            )}
           </div>
 
           <div className="flex flex-col gap-2">

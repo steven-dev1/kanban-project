@@ -199,12 +199,21 @@ export function BoardProvider({
     const boardData = (boardRes.data as Board) ?? null;
     setBoard(boardData);
     if (boardData) {
-      const { data: owner } = await supabase
-        .from("profiles")
-        .select("*")
-        .eq("id", boardData.owner_id)
-        .maybeSingle();
-      setOwnerProfile((owner as Profile) ?? null);
+      // Directorio vía SECURITY DEFINER para ver al propietario aunque el RLS
+      // restrictivo no lo devuelva; si no existe, cae a profiles.
+      const { data: dir, error: dirError } = await supabase.rpc("list_directory");
+      if (!dirError && Array.isArray(dir)) {
+        setOwnerProfile(
+          (dir as Profile[]).find((p) => p.id === boardData.owner_id) ?? null,
+        );
+      } else {
+        const { data: owner } = await supabase
+          .from("profiles")
+          .select("*")
+          .eq("id", boardData.owner_id)
+          .maybeSingle();
+        setOwnerProfile((owner as Profile) ?? null);
+      }
     } else {
       setOwnerProfile(null);
     }

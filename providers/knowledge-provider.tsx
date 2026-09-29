@@ -261,6 +261,14 @@ export function KnowledgeProvider({ children }: { children: ReactNode }) {
   const [loadError, setLoadError] = useState<string | null>(null);
   const reloadTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // Directorio de usuarios: usa la función list_directory si existe; si aún no
+  // se ejecutó el SQL, cae a la tabla profiles (RLS).
+  const loadProfiles = useCallback(async () => {
+    const { data: dir, error } = await supabase.rpc("list_directory");
+    if (!error) return { data: (dir as Profile[]) ?? [], error: null };
+    return supabase.from("profiles").select("*").order("full_name");
+  }, [supabase]);
+
   const refetch = useCallback(async () => {
     const [
       objectsRes,
@@ -292,9 +300,7 @@ export function KnowledgeProvider({ children }: { children: ReactNode }) {
       supabase.from("knowledge_tags").select("*").order("name"),
       supabase.from("knowledge_object_tags").select("*"),
       supabase.from("knowledge_snippet_tags").select("*"),
-      // Directorio completo vía SECURITY DEFINER (incluye al propio usuario),
-      // para poder asignar responsables sin exponer datos sensibles a RLS.
-      supabase.rpc("list_directory"),
+      loadProfiles(),
       supabase.from("pull_requests").select("*").order("created_at", { ascending: false }),
     ]);
 
@@ -342,7 +348,7 @@ export function KnowledgeProvider({ children }: { children: ReactNode }) {
       pullRequests: (pullRequestsRes.data as PullRequest[]) ?? [],
     });
     setLoading(false);
-  }, [supabase, user]);
+  }, [supabase, user, loadProfiles]);
 
   const scheduleRefetch = useCallback(() => {
     if (reloadTimer.current) clearTimeout(reloadTimer.current);

@@ -6,7 +6,8 @@ export function cn(...inputs: ClassValue[]) {
 }
 
 export function initials(name?: string | null, email?: string | null) {
-  const source = name?.trim() || email || "?";
+  const source = name?.trim() || email?.trim() || "";
+  if (!source) return "";
   return source
     .split(/\s+/)
     .map((part) => part[0])

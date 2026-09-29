@@ -1,6 +1,7 @@
 "use client";
 
 import { cn, initials } from "@/lib/utils";
+import { UserRound } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 
@@ -159,6 +160,7 @@ export function Avatar({
   size?: number;
   className?: string;
 }) {
+  const text = initials(name, email);
   return (
     <span
       className={cn(
@@ -166,9 +168,9 @@ export function Avatar({
         className,
       )}
       style={{ width: size, height: size, fontSize: size * 0.38 }}
-      title={name || email || ""}
+      title={name || email || "Usuario"}
     >
-      {initials(name, email)}
+      {text || <UserRound style={{ width: size * 0.55, height: size * 0.55 }} />}
     </span>
   );
 }
