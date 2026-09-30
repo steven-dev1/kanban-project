@@ -11,8 +11,8 @@ const GEMINI_DEFAULT_FALLBACK = "gemini-3.5-flash";
 const GEMINI_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models";
 
 const OPENCODE_DEFAULT_BASE = "https://opencode.ai/zen/go/v1";
-const OPENCODE_DEFAULT_MODEL = "glm-5.3-flash";
-const OPENCODE_FALLBACK_MODEL = "longcat-2.5-preview-free";
+const OPENCODE_DEFAULT_MODEL = "deepseek-v4-flash";
+const OPENCODE_FALLBACK_MODEL = "deepseek-v4.1-flash";
 
 export type AiResult =
   | { ok: true; text: string }
@@ -38,6 +38,25 @@ export interface GenerateOptions {
 
 const RETRYABLE = new Set([429, 500, 502, 503, 504]);
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+// Tiempo máximo por llamada al proveedor. Evita que la función serverless se
+// quede colgada y supere el límite de Vercel (FUNCTION_INVOCATION_TIMEOUT).
+const REQUEST_TIMEOUT_MS = 25000;
+
+/** fetch con aborto por timeout. */
+async function fetchWithTimeout(
+  url: string,
+  init: RequestInit,
+  timeoutMs = REQUEST_TIMEOUT_MS,
+): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 function friendlyError(status: number, message: string): string {
   if (status === 429) {
@@ -80,9 +99,9 @@ async function callGemini(
   let lastStatus = 0;
   let lastMessage = "";
 
-  for (let attempt = 0; attempt < 3; attempt++) {
+  for (let attempt = 0; attempt < 2; attempt++) {
     try {
-      const response = await fetch(`${GEMINI_ENDPOINT}/${model}:generateContent`, {
+      const response = await fetchWithTimeout(`${GEMINI_ENDPOINT}/${model}:generateContent`, {
         method: "POST",
         headers: { "x-goog-api-key": apiKey, "Content-Type": "application/json" },
         body: JSON.stringify(body),
@@ -92,8 +111,8 @@ async function callGemini(
       if (!response.ok) {
         lastStatus = response.status;
         lastMessage = data?.error?.message ?? `Error ${response.status}`;
-        if (RETRYABLE.has(response.status) && attempt < 2) {
-          await sleep(700 * (attempt + 1));
+        if (RETRYABLE.has(response.status) && attempt < 1) {
+          await sleep(400 * (attempt + 1));
           continue;
         }
         return {
@@ -116,8 +135,8 @@ async function callGemini(
     } catch (error) {
       lastStatus = 502;
       lastMessage = error instanceof Error ? error.message : "error de red";
-      if (attempt < 2) {
-        await sleep(700 * (attempt + 1));
+      if (attempt < 1) {
+        await sleep(400 * (attempt + 1));
         continue;
       }
     }
@@ -193,9 +212,9 @@ async function callOpenCode(
   let lastStatus = 0;
   let lastMessage = "";
 
-  for (let attempt = 0; attempt < 3; attempt++) {
+  for (let attempt = 0; attempt < 2; attempt++) {
     try {
-      const response = await fetch(`${baseUrl}/chat/completions`, {
+      const response = await fetchWithTimeout(`${baseUrl}/chat/completions`, {
         method: "POST",
         headers: {
           Authorization: `Bearer ${apiKey}`,
@@ -210,8 +229,8 @@ async function callOpenCode(
       if (!response.ok) {
         lastStatus = response.status;
         lastMessage = data?.error?.message ?? `Error ${response.status}`;
-        if (RETRYABLE.has(response.status) && attempt < 2) {
-          await sleep(700 * (attempt + 1));
+        if (RETRYABLE.has(response.status) && attempt < 1) {
+          await sleep(400 * (attempt + 1));
           continue;
         }
         return {
@@ -229,8 +248,8 @@ async function callOpenCode(
     } catch (error) {
       lastStatus = 502;
       lastMessage = error instanceof Error ? error.message : "error de red";
-      if (attempt < 2) {
-        await sleep(700 * (attempt + 1));
+      if (attempt < 1) {
+        await sleep(400 * (attempt + 1));
         continue;
       }
     }
