@@ -5,6 +5,7 @@ import { CodePanel } from "@/components/knowledge/code-panel";
 import { ColumnsPanel } from "@/components/knowledge/columns-panel";
 import { DuplicateObjectDialog } from "@/components/knowledge/duplicate-object-dialog";
 import { EnvironmentsPanel } from "@/components/knowledge/environments-panel";
+import { ObjectAiActions } from "@/components/knowledge/object-ai-actions";
 import { ExportMenu, type ExportAction } from "@/components/knowledge/export-menu";
 import { ObjectDialog } from "@/components/knowledge/object-dialog";
 import { RelationsPanel } from "@/components/knowledge/relations-panel";
@@ -336,6 +337,7 @@ export function ObjectDetail({ objectId }: { objectId: string }) {
                 toggleObjectTag(object.id, tagId, active).catch((e) => toast(e.message, "error"))
               }
             />
+            <ObjectAiActions objectId={object.id} />
             <Button size="sm" variant="ghost" title="Enviar" onClick={() => setSendOpen(true)}>
               <Send className="h-4 w-4" />
             </Button>

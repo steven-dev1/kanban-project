@@ -1,10 +1,15 @@
 "use client";
 
+import { AiMenuItem, AiTextDialog, type AiTextRequest } from "@/components/knowledge/ai-dialog";
 import { EnvironmentBadge } from "@/components/knowledge/ui";
+import { Button } from "@/components/ui/button";
+import { Dropdown } from "@/components/ui/dropdown";
 import { Select } from "@/components/ui/select";
+import { aiDiffExplain } from "@/lib/ai/client";
 import { diffLines, diffStats, type DiffLine } from "@/lib/knowledge/diff";
 import type { OracleCodeVersion } from "@/lib/types";
 import { cn, formatDate } from "@/lib/utils";
+import { Sparkles } from "lucide-react";
 import { useMemo, useState } from "react";
 
 interface SplitRow {
@@ -51,6 +56,7 @@ export function VersionComparator({ versions }: { versions: OracleCodeVersion[] 
   const [leftId, setLeftId] = useState(sorted[0]?.id ?? "");
   const [rightId, setRightId] = useState(sorted[sorted.length - 1]?.id ?? "");
   const [view, setView] = useState<"split" | "unified">("split");
+  const [aiRequest, setAiRequest] = useState<AiTextRequest | null>(null);
 
   const left = sorted.find((v) => v.id === leftId) ?? null;
   const right = sorted.find((v) => v.id === rightId) ?? null;
@@ -117,27 +123,60 @@ export function VersionComparator({ versions }: { versions: OracleCodeVersion[] 
         </div>
       )}
 
-      <div className="flex items-center justify-end gap-1 text-xs">
-        <button
-          type="button"
-          onClick={() => setView("split")}
-          className={cn(
-            "rounded-md px-2 py-1",
-            view === "split" ? "bg-primary/10 text-primary" : "text-muted-foreground hover:bg-muted",
-          )}
-        >
-          Lado a lado
-        </button>
-        <button
-          type="button"
-          onClick={() => setView("unified")}
-          className={cn(
-            "rounded-md px-2 py-1",
-            view === "unified" ? "bg-primary/10 text-primary" : "text-muted-foreground hover:bg-muted",
-          )}
-        >
-          Unificado
-        </button>
+      <div className="flex items-center justify-between gap-2 text-xs">
+        {left && right ? (
+          <Dropdown
+            trigger={
+              <Button variant="outline" size="sm">
+                <Sparkles className="h-4 w-4 text-primary" /> Explicar diferencias
+              </Button>
+            }
+          >
+            {(close) => (
+              <div className="w-56">
+                <AiMenuItem
+                  label="Explicar cambios con IA"
+                  onClick={() => {
+                    close();
+                    setAiRequest({
+                      title: "Diferencias entre versiones",
+                      description: "Qué cambió funcionalmente, riesgos y posibles regresiones.",
+                      run: () =>
+                        aiDiffExplain({
+                          previous: left.source_code,
+                          current: right.source_code,
+                        }),
+                    });
+                  }}
+                />
+              </div>
+            )}
+          </Dropdown>
+        ) : (
+          <span />
+        )}
+        <div className="flex items-center gap-1">
+          <button
+            type="button"
+            onClick={() => setView("split")}
+            className={cn(
+              "rounded-md px-2 py-1",
+              view === "split" ? "bg-primary/10 text-primary" : "text-muted-foreground hover:bg-muted",
+            )}
+          >
+            Lado a lado
+          </button>
+          <button
+            type="button"
+            onClick={() => setView("unified")}
+            className={cn(
+              "rounded-md px-2 py-1",
+              view === "unified" ? "bg-primary/10 text-primary" : "text-muted-foreground hover:bg-muted",
+            )}
+          >
+            Unificado
+          </button>
+        </div>
       </div>
 
       {!result ? (
@@ -178,6 +217,7 @@ export function VersionComparator({ versions }: { versions: OracleCodeVersion[] 
           <SplitPane side="right" version={right} rows={result.rows} />
         </div>
       )}
+      <AiTextDialog request={aiRequest} onClose={() => setAiRequest(null)} />
     </div>
   );
 }

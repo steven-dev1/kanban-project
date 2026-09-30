@@ -56,17 +56,12 @@ export function MembersDialog({
     }
     setEmail("");
     setFeedback({
-      type: result.warning ? "warn" : "ok",
+      type: result.info ? "warn" : "ok",
       text:
-        result.warning ??
-        "Invitación enviada. El usuario recibirá un correo y una notificación.",
+        result.info ??
+        "Invitación enviada. El usuario recibirá una notificación en la app.",
     });
-    toast(
-      result.warning
-        ? "Invitación creada, pero no se pudo enviar el correo."
-        : "Invitación enviada por correo.",
-      result.warning ? "info" : "success",
-    );
+    toast("Invitación enviada", "success");
   }
 
   return (
@@ -74,8 +69,11 @@ export function MembersDialog({
       <div className="flex flex-col gap-5">
         {isAdmin && (
           <form onSubmit={handleInvite} className="rounded-xl border border-border p-3">
-            <p className="mb-2 flex items-center gap-1.5 text-sm font-medium">
-              <UserPlus className="h-4 w-4" /> Invitar por correo
+            <p className="mb-1 flex items-center gap-1.5 text-sm font-medium">
+              <UserPlus className="h-4 w-4" /> Invitar usuario por correo
+            </p>
+            <p className="mb-2 text-xs text-muted-foreground">
+              Recibirá una notificación dentro de la app (no se envía correo).
             </p>
             <div className="flex flex-col gap-2 sm:flex-row">
               <Input

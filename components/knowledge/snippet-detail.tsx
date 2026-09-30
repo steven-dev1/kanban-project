@@ -4,6 +4,7 @@ import { CodeBlock } from "@/components/knowledge/code-block";
 import { ExportMenu, type ExportAction } from "@/components/knowledge/export-menu";
 import { SnippetDialog } from "@/components/knowledge/snippet-dialog";
 import { TagPicker } from "@/components/knowledge/tag-picker";
+import { SnippetAiActions } from "@/components/knowledge/snippet-ai-actions";
 import { SendItemDialog } from "@/components/messages/send-item-dialog";
 import { Field, ObjectTypeBadge, Skeleton } from "@/components/knowledge/ui";
 import { Button } from "@/components/ui/button";
@@ -179,6 +180,7 @@ export function SnippetDetail({ snippetId }: { snippetId: string }) {
                 toggleSnippetTag(snippet.id, tagId, active).catch((e) => toast(e.message, "error"))
               }
             />
+            <SnippetAiActions snippetId={snippet.id} />
             <Button size="sm" variant="ghost" onClick={() => setSendOpen(true)} title="Enviar">
               <Send className="h-4 w-4" />
             </Button>

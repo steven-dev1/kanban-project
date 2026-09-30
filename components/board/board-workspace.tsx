@@ -5,6 +5,7 @@ import { BoardFieldsDialog } from "@/components/board/board-fields-dialog";
 import { CalendarView } from "@/components/board/calendar-view";
 import { CardDialog } from "@/components/board/card-dialog";
 import { ChartsView } from "@/components/board/charts-view";
+import { ImportCasesDialog } from "@/components/board/import-cases-dialog";
 import { KanbanView } from "@/components/board/kanban-view";
 import { MembersDialog } from "@/components/board/members-dialog";
 import { TableView } from "@/components/board/table-view";
@@ -25,6 +26,7 @@ import {
   Pause,
   Play,
   Save,
+  Sparkles,
   Table2,
   Users,
 } from "lucide-react";
@@ -40,6 +42,7 @@ export function BoardWorkspace() {
     loading,
     loadError,
     isAdmin,
+    canEdit,
     togglePause,
     archivedCards,
     archivedLists,
@@ -57,6 +60,7 @@ export function BoardWorkspace() {
   const [membersOpen, setMembersOpen] = useState(false);
   const [archiveOpen, setArchiveOpen] = useState(false);
   const [fieldsOpen, setFieldsOpen] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
 
   if (loading) {
     return (
@@ -137,6 +141,18 @@ export function BoardWorkspace() {
               </button>
             ))}
           </div>
+
+          {canEdit && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setImportOpen(true)}
+              title="Pega un correo o texto y la IA creará las tarjetas"
+            >
+              <Sparkles className="h-4 w-4 text-primary" />
+              <span className="hidden sm:inline">Detectar casos</span>
+            </Button>
+          )}
 
           <Button variant="outline" size="sm" onClick={() => setMembersOpen(true)}>
             <Users className="h-4 w-4" />
@@ -236,6 +252,7 @@ export function BoardWorkspace() {
       <MembersDialog open={membersOpen} onClose={() => setMembersOpen(false)} />
       <ArchivePanel open={archiveOpen} onClose={() => setArchiveOpen(false)} />
       <BoardFieldsDialog open={fieldsOpen} onClose={() => setFieldsOpen(false)} />
+      <ImportCasesDialog open={importOpen} onClose={() => setImportOpen(false)} />
     </div>
   );
 }

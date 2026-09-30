@@ -34,6 +34,15 @@ import {
 
 type MemberWithProfile = BoardMember & { profile: Profile | null };
 
+/** Caso detectado (p. ej. por IA) listo para crear como tarjeta. */
+export interface ImportedCase {
+  title: string;
+  description?: string | null;
+  due_date?: string | null;
+  list_id: string;
+  assignee_user_ids: string[];
+}
+
 interface BoardContextValue {
   boardId: string;
   board: Board | null;
@@ -56,6 +65,7 @@ interface BoardContextValue {
   deleteList: (id: string) => Promise<void>;
   moveList: (id: string, beforePos: number | null, afterPos: number | null) => Promise<void>;
   addCard: (listId: string, title: string, description?: string) => Promise<Card | null>;
+  importCases: (cases: ImportedCase[]) => Promise<number>;
   updateCard: (id: string, patch: Partial<Card>) => Promise<void>;
   toggleCardComplete: (cardId: string, completed: boolean) => Promise<void>;
   addChecklistItem: (cardId: string, text: string) => Promise<void>;
@@ -82,7 +92,7 @@ interface BoardContextValue {
   inviteMember: (
     email: string,
     role: Role,
-  ) => Promise<{ error: string | null; warning: string | null }>;
+  ) => Promise<{ error: string | null; info: string | null }>;
   updateMemberRole: (memberId: string, role: Role) => Promise<void>;
   removeMember: (memberId: string) => Promise<void>;
   cancelInvitation: (id: string) => Promise<void>;
@@ -462,6 +472,53 @@ export function BoardProvider({
       return (data as Card) ?? null;
     },
     [supabase, boardId, lists, user, logActivity],
+  );
+
+  const importCases = useCallback(
+    async (cases: ImportedCase[]) => {
+      if (cases.length === 0) return 0;
+
+      const maxByList = new Map<string, number>();
+      for (const list of lists) {
+        maxByList.set(
+          list.id,
+          list.cards.reduce((acc, card) => Math.max(acc, card.position), 0),
+        );
+      }
+
+      const rows = cases.map((item) => {
+        const base = maxByList.get(item.list_id) ?? 0;
+        const position = base + 1000;
+        maxByList.set(item.list_id, position);
+        return {
+          board_id: boardId,
+          list_id: item.list_id,
+          title: item.title,
+          description: item.description ?? null,
+          due_date: item.due_date ?? null,
+          position,
+          created_by: user?.id ?? null,
+        };
+      });
+
+      const { data, error } = await supabase.from("cards").insert(rows).select("id");
+      if (error) throw toDatabaseError(error);
+
+      const created = (data as { id: string }[]) ?? [];
+      const links: { card_id: string; user_id: string }[] = [];
+      created.forEach((card, index) => {
+        for (const userId of cases[index]?.assignee_user_ids ?? []) {
+          links.push({ card_id: card.id, user_id: userId });
+        }
+      });
+      if (links.length > 0) {
+        await supabase.from("card_assignees").insert(links);
+      }
+
+      await refetch();
+      return created.length;
+    },
+    [supabase, boardId, user, lists, refetch],
   );
 
   const updateCard = useCallback(
@@ -863,46 +920,47 @@ export function BoardProvider({
   const inviteMember = useCallback(
     async (email: string, role: Role) => {
       const normalized = email.trim().toLowerCase();
-      if (!normalized) return { error: "Escribe un correo", warning: null };
+      if (!normalized) return { error: "Escribe un correo", info: null };
       if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(normalized)) {
-        return { error: "El correo no es válido", warning: null };
+        return { error: "El correo no es válido", info: null };
       }
       if (members.some((m) => m.profile?.email?.toLowerCase() === normalized)) {
-        return { error: "Ese usuario ya es miembro de este tablero", warning: null };
+        return { error: "Ese usuario ya es miembro de este tablero", info: null };
       }
       if (invitations.some((i) => i.email.toLowerCase() === normalized)) {
-        return { error: "Ya hay una invitación pendiente para ese correo", warning: null };
+        return { error: "Ya hay una invitación pendiente para ese correo", info: null };
       }
 
       try {
-        const { data: existingProfile } = await supabase
-          .from("profiles")
-          .select("id")
-          .ilike("email", normalized)
-          .maybeSingle();
-
+        // La invitación se entrega como notificación dentro de la app
+        // (los triggers de la base de datos crean la notificación).
         const { error } = await supabase.from("board_invitations").insert({
           board_id: boardId,
           email: normalized,
           role,
           invited_by: user?.id ?? null,
         });
-        if (error) return { error: toDatabaseError(error).message, warning: null };
+        if (error) return { error: toDatabaseError(error).message, info: null };
+
+        const { data: existingProfile } = await supabase
+          .from("profiles")
+          .select("id")
+          .ilike("email", normalized)
+          .maybeSingle();
 
         await refetch();
 
         if (!existingProfile) {
           return {
             error: null,
-            warning:
-              "El correo aún no está registrado. La invitación queda pendiente y se le notificará al crear su cuenta.",
+            info: "Ese correo aún no tiene cuenta. Se le notificará automáticamente cuando se registre.",
           };
         }
-        return { error: null, warning: null };
+        return { error: null, info: null };
       } catch (err) {
         return {
           error: err instanceof Error ? err.message : "Error de red",
-          warning: null,
+          info: null,
         };
       }
     },
@@ -1156,6 +1214,7 @@ export function BoardProvider({
       deleteList,
       moveList,
       addCard,
+      importCases,
       updateCard,
       toggleCardComplete,
       addChecklistItem,
@@ -1212,6 +1271,7 @@ export function BoardProvider({
       deleteList,
       moveList,
       addCard,
+      importCases,
       updateCard,
       toggleCardComplete,
       addChecklistItem,
